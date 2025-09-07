@@ -1,61 +1,78 @@
 # 🪙 DeadLock  
 
-*DeadLock* is a decentralized application (dApp) designed to act as a *digital will* and *life activity monitor* on the blockchain.  
-It ensures that your assets are securely distributed according to your wishes if you become inactive for a specified period.  
+> ⚡ *Your Digital Will on the Blockchain* — a **decentralized life activity monitor** that ensures your assets are distributed fairly when you go inactive.  
+
+<p align="center">
+  <img src="https://media.giphy.com/media/3o6Zt481isNVuQI1l6/giphy.gif" width="400" alt="Blockchain animation" />
+</p>
+
+<p align="center">
+  <a href="https://vuyyurusrujan.github.io/aptos_new_deadlock">
+    <img src="https://img.shields.io/badge/🌐 Live Demo-000?style=for-the-badge&logo=github" />
+  </a>
+  <a href="https://github.com/VuyyuruSrujan/aptos_new_deadlock">
+    <img src="https://img.shields.io/badge/📂 GitHub Repo-181717?style=for-the-badge&logo=github" />
+  </a>
+  <img src="https://img.shields.io/badge/⚡ Built on-Aptos-blue?style=for-the-badge&logo=aptos" />
+</p>  
 
 ---
 
 ## 🚀 Concept  
 
-When a user registers on *DeadLock*, they:  
-1. Specify *how often* they will open or interact with the dApp (e.g., every 30 days).  
-2. Provide *beneficiary details* – wallet addresses of family members or others, along with the percentage of funds each should receive.  
-3. Deposit funds into the contract.  
+When you register on **DeadLock**, you:  
 
-If the user fails to check in within the specified time:  
-- The contract automatically assumes the user is inactive (or deceased).  
-- Funds are released to the beneficiaries in the *exact percentages* set during registration.  
+✅ Set your *check-in interval* (e.g., every 30 days).  
+✅ Add your *beneficiaries* (wallet + percentage).  
+✅ Deposit your assets.  
+
+⏳ If you **fail to check in** within your chosen time, the contract:  
+- Automatically assumes inactivity.  
+- Instantly releases your funds to beneficiaries in the *exact allocation* you set.  
+
+✨ No middlemen. No delays. 100% trustless.  
 
 ---
 
 ## 🛠 Features  
 
-- *Life Activity Tracking* – Monitors user activity based on the frequency they choose.  
-- *Decentralized Inheritance* – Distributes funds without middlemen or legal delays.  
-- *Customizable Beneficiaries* – Users can set multiple recipients with custom allocation percentages.  
-- *Trustless & Transparent* – Powered by blockchain smart contracts, ensuring fairness and security.  
+- 🔄 **Life Activity Tracking** – Monitors your activity frequency.  
+- 🏦 **Decentralized Inheritance** – Removes legal & centralized barriers.  
+- 🧑‍🤝‍🧑 **Custom Beneficiaries** – Allocate assets in percentages you decide.  
+- 🔒 **Trustless & Transparent** – Blockchain-powered smart contracts.  
 
 ---
 
-## 📌 Example Workflow  
+## 📌 How It Works  
 
-1. *User Registration*  
-   - Inputs:  
-     - Activity check-in interval (e.g., every 60 days)  
-     - List of beneficiaries (address + percentage)  
-     - Deposit amount  
+<p align="center">
+  <img src="https://media.giphy.com/media/MUukv3Wq3PVO8/giphy.gif" width="500" alt="Workflow animation" />
+</p>
 
-2. *Activity Tracking*  
-   - Smart contract checks if the user visited within the set interval.  
-
-3. *Fund Distribution*  
-   - If the user fails to check in on time:  
-     - Funds are released automatically to beneficiaries.  
+1. 📝 **Register**: Enter your activity interval, beneficiaries, and deposit funds.  
+2. ⏳ **Track Activity**: Smart contract monitors check-ins.  
+3. 🎁 **Auto Distribution**: If inactive, funds are auto-sent to beneficiaries.  
 
 ---
 
 ## 🏗 Tech Stack  
 
-- *Smart Contract Language:* Move  
-- *Frontend:* TypeScript  
-- *Blockchain Network:* Aptos  
-- *Wallet Integration:* Aptos Wallet (Petra)  
+- ⚙️ **Smart Contracts:** Move  
+- 🖥 **Frontend:** TypeScript + React  
+- 🔗 **Blockchain:** Aptos  
+- 👛 **Wallet:** Petra  
 
 ---
 
-## 📦 Installation & Setup  
+## 📦 Quick Setup  
 
-1. Clone the repository:  
-   ```bash
-   git clone https://github.com/your-username/deadlock.git
-   cd deadlock
+```bash
+# Clone repo
+git clone https://github.com/VuyyuruSrujan/aptos_new_deadlock.git
+cd aptos_new_deadlock
+
+# Install dependencies
+npm install
+
+# Run dev server
+npm run dev
