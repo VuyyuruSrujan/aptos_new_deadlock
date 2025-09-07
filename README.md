@@ -1,40 +1,61 @@
-## Create Aptos Dapp Boilerplate Template
+# 🪙 DeadLock  
 
-The Boilerplate template provides a starter dapp with all necessary dapp infrastructure and a simple wallet info implementation, transfer APT and a simple message board functionality to send and read a message on chain.
+*DeadLock* is a decentralized application (dApp) designed to act as a *digital will* and *life activity monitor* on the blockchain.  
+It ensures that your assets are securely distributed according to your wishes if you become inactive for a specified period.  
 
-## Read the Boilerplate template docs
+---
 
-To get started with the Boilerplate template and learn more about the template functionality and usage, head over to the [Boilerplate template docs](https://learn.aptoslabs.com/en/dapp-templates/boilerplate-template)
+## 🚀 Concept  
 
-## The Boilerplate template provides:
+When a user registers on *DeadLock*, they:  
+1. Specify *how often* they will open or interact with the dApp (e.g., every 30 days).  
+2. Provide *beneficiary details* – wallet addresses of family members or others, along with the percentage of funds each should receive.  
+3. Deposit funds into the contract.  
 
-- **Folder structure** - A pre-made dapp folder structure with a `frontend` and `contract` folders.
-- **Dapp infrastructure** - All required dependencies a dapp needs to start building on the Aptos network.
-- **Wallet Info implementation** - Pre-made `WalletInfo` components to demonstrate how one can use to read a connected Wallet info.
-- **Transfer APT implementation** - Pre-made `transfer` components to send APT to an address.
-- **Message board functionality implementation** - Pre-made `message` components to send and read a message on chain
+If the user fails to check in within the specified time:  
+- The contract automatically assumes the user is inactive (or deceased).  
+- Funds are released to the beneficiaries in the *exact percentages* set during registration.  
 
-## What tools the template uses?
+---
 
-- React framework
-- Vite development tool
-- shadcn/ui + tailwind for styling
-- Aptos TS SDK
-- Aptos Wallet Adapter
-- Node based Move commands
-- [Vite-pwa](https://vite-pwa-org.netlify.app/)
+## 🛠 Features  
 
-## What Move commands are available?
+- *Life Activity Tracking* – Monitors user activity based on the frequency they choose.  
+- *Decentralized Inheritance* – Distributes funds without middlemen or legal delays.  
+- *Customizable Beneficiaries* – Users can set multiple recipients with custom allocation percentages.  
+- *Trustless & Transparent* – Powered by blockchain smart contracts, ensuring fairness and security.  
 
-The tool utilizes [aptos-cli npm package](https://github.com/aptos-labs/aptos-cli) that lets us run Aptos CLI in a Node environment.
+---
 
-Some commands are built-in the template and can be ran as a npm script, for example:
+## 📌 Example Workflow  
 
-- `npm run move:publish` - a command to publish the Move contract
-- `npm run move:test` - a command to run Move unit tests
-- `npm run move:compile` - a command to compile the Move contract
-- `npm run move:upgrade` - a command to upgrade the Move contract
-- `npm run dev` - a command to run the frontend locally
-- `npm run deploy` - a command to deploy the dapp to Vercel
+1. *User Registration*  
+   - Inputs:  
+     - Activity check-in interval (e.g., every 60 days)  
+     - List of beneficiaries (address + percentage)  
+     - Deposit amount  
 
-For all other available CLI commands, can run `npx aptos` and see a list of all available commands.
+2. *Activity Tracking*  
+   - Smart contract checks if the user visited within the set interval.  
+
+3. *Fund Distribution*  
+   - If the user fails to check in on time:  
+     - Funds are released automatically to beneficiaries.  
+
+---
+
+## 🏗 Tech Stack  
+
+- *Smart Contract Language:* Move  
+- *Frontend:* TypeScript  
+- *Blockchain Network:* Aptos  
+- *Wallet Integration:* Aptos Wallet (Petra)  
+
+---
+
+## 📦 Installation & Setup  
+
+1. Clone the repository:  
+   ```bash
+   git clone https://github.com/your-username/deadlock.git
+   cd deadlock
