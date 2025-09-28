@@ -4,7 +4,6 @@ module srujan_addr::deadlock_v2 {
     use aptos_framework::coin;
     use aptos_framework::aptos_coin::AptosCoin;
     use aptos_std::table;
-    // Events/guid removed to avoid friend-only API usage
 
     struct LockedFunds has key {
         amount: coin::Coin<AptosCoin>
@@ -18,7 +17,6 @@ module srujan_addr::deadlock_v2 {
         check_in_seconds: u64  // Stored in seconds for more precise tracking
     }
 
-    /// Deletes the user's profile data
     public entry fun delete_profile(user: &signer) acquires UserProfile {
         let user_addr = signer::address_of(user);
         assert!(exists<UserProfile>(user_addr), 0); // Assert profile exists
@@ -50,7 +48,6 @@ module srujan_addr::deadlock_v2 {
         list: vector<Beneficiary>
     }
 
-    /// Initialize the global index - should be called by the module deployer
     public entry fun initialize_global_index(deployer: &signer) {
         let deployer_addr = signer::address_of(deployer);
         // Only allow the module deployer to initialize
@@ -62,7 +59,6 @@ module srujan_addr::deadlock_v2 {
         };
     }
 
-    /// Add a beneficiary for the sender. Each user has their own Beneficiaries resource.
     public entry fun add_beneficiary(user: &signer, beneficiary_addr: address, percentage: u8) 
         acquires Beneficiaries, GlobalIndex 
     {
@@ -135,7 +131,6 @@ module srujan_addr::deadlock_v2 {
         }
     }
 
-    /// Get beneficiaries in frontend-friendly format (addresses and percentages as separate vectors)
     #[view]
     public fun get_beneficiaries_details(addr: address): (vector<address>, vector<u8>) acquires Beneficiaries {
         if (exists<Beneficiaries>(addr)) {
@@ -158,7 +153,6 @@ module srujan_addr::deadlock_v2 {
         }
     }
 
-    /// Get total number of beneficiaries added by this user
     #[view]
     public fun get_beneficiaries_count(addr: address): u64 acquires Beneficiaries {
         if (exists<Beneficiaries>(addr)) {
@@ -202,7 +196,6 @@ module srujan_addr::deadlock_v2 {
         }
     }
 
-    /// Check if someone has been added as a beneficiary by anyone
     #[view]
     public fun has_been_added_as_beneficiary(addr: address): bool acquires GlobalIndex {
         if (exists<GlobalIndex>(@srujan_addr)) {
@@ -213,7 +206,6 @@ module srujan_addr::deadlock_v2 {
         }
     }
 
-    /// Get the total number of people who added this address as beneficiary
     #[view]
     public fun get_beneficiary_owners_count(addr: address): u64 acquires GlobalIndex {
         if (exists<GlobalIndex>(@srujan_addr)) {
@@ -229,13 +221,11 @@ module srujan_addr::deadlock_v2 {
         }
     }
 
-    /// Get detailed info about who added this address as beneficiary with their percentages
     #[view]
     public fun get_beneficiary_details(addr: address): vector<OwnerEntry> acquires GlobalIndex {
         get_added_as_beneficiary(addr)
     }
 
-    /// Get unclaimed inheritance information for a specific address
     #[view]
     public fun get_unclaimed_inheritances(addr: address): vector<OwnerEntry> acquires GlobalIndex {
         if (exists<GlobalIndex>(@srujan_addr)) {
@@ -276,7 +266,6 @@ module srujan_addr::deadlock_v2 {
         total_percentage
     }
 
-    /// Get owner entry details as tuple (owner, percentage, claimed) by index
     #[view]
     public fun get_owner_entry_details_by_index(addr: address, index: u64): (address, u8, bool) acquires GlobalIndex {
         let owners = get_added_as_beneficiary(addr);
@@ -285,7 +274,6 @@ module srujan_addr::deadlock_v2 {
         (owner_entry.owner, owner_entry.percentage, owner_entry.claimed)
     }
 
-    /// Get all owner entries details as vectors for easier frontend consumption
     #[view]
     public fun get_all_owner_entries_details(addr: address): (vector<address>, vector<u8>, vector<bool>) acquires GlobalIndex {
         let owners = get_added_as_beneficiary(addr);
@@ -306,7 +294,6 @@ module srujan_addr::deadlock_v2 {
         (owners_addrs, percentages, claimed_statuses)
     }
 
-    /// Claim inherited funds from someone who added you as beneficiary
     public entry fun claim_inherited_funds(
         beneficiary: &signer, 
         owner_addr: address
@@ -451,8 +438,6 @@ public entry fun lock_funds(user: &signer, amount: u64) acquires LockedFunds {
         }
     }
 
-    /// Store or update user profile information
-    /// Check-in period is converted from days (as decimal) to seconds for storage
     public entry fun store_user_profile(
         user: &signer, 
         first_name: vector<u8>,
@@ -567,7 +552,6 @@ public entry fun lock_funds(user: &signer, amount: u64) acquires LockedFunds {
         }
     }
 
-    /// Remove a beneficiary from the user's list
     public entry fun remove_beneficiary(user: &signer, beneficiary_addr: address) acquires Beneficiaries, GlobalIndex {
         let user_addr = signer::address_of(user);
         assert!(exists<Beneficiaries>(user_addr), 1001); // No beneficiaries

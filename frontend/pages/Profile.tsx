@@ -32,6 +32,12 @@ const Profile = () => {
   const [walletBalance, setWalletBalance] = useState(0);
   const [isClaimingFunds, setIsClaimingFunds] = useState<{[key: string]: boolean}>({});
 
+  // State for Deadlock Configuration
+  const [inactiveDays, setInactiveDays] = useState<string>("");
+  const [savedInactiveDays, setSavedInactiveDays] = useState<number | null>(null);
+  const [isEditing, setIsEditing] = useState(true);
+  const [isSaving, setIsSaving] = useState(false);
+
   // Get wallet address from localStorage
   useEffect(() => {
     const addr = localStorage.getItem("walletAddress") || "";
@@ -179,6 +185,41 @@ const Profile = () => {
     }
   };
 
+  const handleSaveConfiguration = async () => {
+    if (!inactiveDays || Number(inactiveDays) < 1) {
+      toast({ 
+        title: "Invalid Input", 
+        description: "Please enter a valid number of days (minimum 1 day).", 
+        variant: "destructive" 
+      });
+      return;
+    }
+
+    setIsSaving(true);
+    
+    // Simulate saving (since no backend/smart contract changes needed)
+    setTimeout(() => {
+      setSavedInactiveDays(Number(inactiveDays));
+      setIsEditing(false);
+      setIsSaving(false);
+      toast({ 
+        title: "Configuration Saved", 
+        description: `Inactivity period set to ${inactiveDays} days successfully.`, 
+        variant: "default" 
+      });
+    }, 1000);
+  };
+
+  const handleUpdateConfiguration = () => {
+    setIsEditing(true);
+    setInactiveDays(savedInactiveDays?.toString() || "");
+  };
+
+  const handleCancelEdit = () => {
+    setIsEditing(false);
+    setInactiveDays("");
+  };
+
   const handleClaimFunds = async (ownerAddress: string, uniqueKey: string) => {
     console.log("Starting claim for owner:", ownerAddress, "with key:", uniqueKey);
     console.log("Current claiming states:", isClaimingFunds);
@@ -251,7 +292,7 @@ const Profile = () => {
         <Tabs defaultValue="lock" className="space-y-6">
           <TabsList className="grid w-full grid-cols-4">
             <TabsTrigger value="lock">Lock Funds</TabsTrigger>
-            <TabsTrigger value="security">Security</TabsTrigger>
+            <TabsTrigger value="security">Profile Setup</TabsTrigger>
             <TabsTrigger value="wallets">Wallets</TabsTrigger>
             <TabsTrigger value="beneficiary-status">Who Added Me</TabsTrigger>
           </TabsList>
@@ -313,44 +354,134 @@ const Profile = () => {
               <CardHeader>
                 <CardTitle className="flex items-center gap-2">
                   <Shield className="h-5 w-5" />
-                  Security Settings
+                  Profile Setup
                 </CardTitle>
-                <CardDescription>Protect your account with advanced security features</CardDescription>
+                <CardDescription>Configure your deadlock settings and inheritance preferences</CardDescription>
               </CardHeader>
               <CardContent className="space-y-6">
-                <div className="flex items-center justify-between p-4 border rounded-lg">
-                  <div>
-                    <h3 className="font-medium">Two-Factor Authentication</h3>
-                    <p className="text-sm text-muted-foreground">Add an extra layer of security</p>
+                <div className="p-4 border rounded-lg bg-gradient-to-r from-primary/5 to-primary/10 border-primary/20">
+                  <div className="mb-4">
+                    <h3 className="font-medium text-primary mb-2">Deadlock Configuration</h3>
+                    <p className="text-sm text-muted-foreground mb-4">
+                      Our smart contract securely locks your digital assets and automatically transfers them to your designated beneficiaries during periods of wallet inactivity. 
+                      Configure the inactivity threshold to trigger the inheritance distribution process.
+                    </p>
                   </div>
-                  <Badge variant="outline" className="text-green-600">Enabled</Badge>
+                  
+                  <div className="space-y-4">
+                    {isEditing ? (
+                      // Editing/Input Mode
+                      <>
+                        <div className="space-y-2">
+                          <Label htmlFor="inactiveDays" className="text-primary font-medium">
+                            Inactivity Period (Days)
+                          </Label>
+                          <Input 
+                            id="inactiveDays" 
+                            type="number" 
+                            placeholder="e.g., 365" 
+                            min="1"
+                            max="3650"
+                            value={inactiveDays}
+                            onChange={(e) => setInactiveDays(e.target.value)}
+                            className="border-primary/30 focus:border-primary"
+                            disabled={isSaving}
+                          />
+                          <p className="text-xs text-muted-foreground">
+                            After this many days without any transactions from your wallet, 
+                            the smart contract will consider you inactive and allow beneficiaries to claim inheritance.
+                          </p>
+                        </div>
+                        
+                        <div className="bg-muted border border-border rounded-lg p-3">
+                          <p className="text-sm text-muted-foreground">
+                            <strong>Important:</strong> This setting determines when your beneficiaries can access your locked funds. 
+                            Choose a period that balances security with your expected activity patterns.
+                          </p>
+                        </div>
+                        
+                        <div className="flex gap-2">
+                          <Button 
+                            onClick={handleSaveConfiguration}
+                            disabled={isSaving || !inactiveDays}
+                            className="bg-primary hover:bg-primary/90 text-primary-foreground flex items-center"
+                          >
+                            {isSaving ? (
+                              <>
+                                <Loader2 className="animate-spin h-4 w-4 mr-2" />
+                                Saving...
+                              </>
+                            ) : (
+                              "Save Configuration"
+                            )}
+                          </Button>
+                          {savedInactiveDays !== null && (
+                            <Button 
+                              onClick={handleCancelEdit}
+                              variant="outline"
+                              disabled={isSaving}
+                            >
+                              Cancel
+                            </Button>
+                          )}
+                        </div>
+                      </>
+                    ) : (
+                      // Display Mode
+                      <>
+                        <div className="bg-accent border border-border rounded-lg p-4">
+                          <div className="flex items-center justify-between">
+                            <div>
+                              <Label className="text-primary font-medium text-base">
+                                Current Inactivity Period
+                              </Label>
+                              <div className="flex items-center gap-2 mt-1">
+                                <span className="text-2xl font-bold text-primary">
+                                  {savedInactiveDays}
+                                </span>
+                                <span className="text-primary/80 font-medium">
+                                  {savedInactiveDays === 1 ? 'day' : 'days'}
+                                </span>
+                              </div>
+                              <p className="text-xs text-muted-foreground mt-1">
+                                Configuration saved successfully
+                              </p>
+                            </div>
+                            <Button 
+                              onClick={handleUpdateConfiguration}
+                              variant="outline"
+                              className="border-primary/30 text-primary hover:bg-accent"
+                            >
+                              Update
+                            </Button>
+                          </div>
+                        </div>
+                        
+                        <div className="bg-primary/5 border border-primary/20 rounded-lg p-3">
+                          <p className="text-sm text-primary/80">
+                            <strong>Active Configuration:</strong> After {savedInactiveDays} {savedInactiveDays === 1 ? 'day' : 'days'} of wallet inactivity, 
+                            your beneficiaries will be able to claim their inheritance shares.
+                          </p>
+                        </div>
+                      </>
+                    )}
+                  </div>
                 </div>
 
                 <div className="flex items-center justify-between p-4 border rounded-lg">
                   <div>
-                    <h3 className="font-medium">Email Notifications</h3>
-                    <p className="text-sm text-muted-foreground">Get notified of account activity</p>
+                    <h3 className="font-medium">Profile Status</h3>
+                    <p className="text-sm text-muted-foreground">Current account status and activity</p>
                   </div>
-                  <Badge variant="outline">Enabled</Badge>
+                  <Badge variant="outline" className="text-green-600">Active</Badge>
                 </div>
 
-                <div className="space-y-4">
-                  <h3 className="font-medium">Change Password</h3>
-                  <div className="space-y-3">
-                    <div className="space-y-2">
-                      <Label htmlFor="currentPassword">Current Password</Label>
-                      <Input id="currentPassword" type="password" />
-                    </div>
-                    <div className="space-y-2">
-                      <Label htmlFor="newPassword">New Password</Label>
-                      <Input id="newPassword" type="password" />
-                    </div>
-                    <div className="space-y-2">
-                      <Label htmlFor="confirmPassword">Confirm New Password</Label>
-                      <Input id="confirmPassword" type="password" />
-                    </div>
+                <div className="flex items-center justify-between p-4 border rounded-lg">
+                  <div>
+                    <h3 className="font-medium">Last Activity</h3>
+                    <p className="text-sm text-muted-foreground">Most recent wallet transaction</p>
                   </div>
-                  <Button>Update Password</Button>
+                  <Badge variant="outline">Today</Badge>
                 </div>
               </CardContent>
             </Card>
