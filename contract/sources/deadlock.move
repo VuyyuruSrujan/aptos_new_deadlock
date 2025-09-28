@@ -1,4 +1,4 @@
-module srujan_addr::deadlock1 {   
+module srujan_addr::deadlock_v2 {   
     use std::signer;
     use std::vector;
     use aptos_framework::coin;
@@ -73,13 +73,24 @@ module srujan_addr::deadlock1 {
         if (exists<Beneficiaries>(user_addr)) {
             let b = borrow_global_mut<Beneficiaries>(user_addr);
             let len = vector::length(&b.list);
+            
+            // Check if beneficiary already exists
+            let i = 0;
+            while (i < len) {
+                let ben = vector::borrow(&b.list, i);
+                if (ben.addr == beneficiary_addr) {
+                    abort EDUPLICATE_BENEFICIARY; // Beneficiary already exists
+                };
+                i = i + 1;
+            };
+            
             let total = {
                 let acc = 0u64;
-                let i = 0;
-                while (i < len) {
-                    let ben = vector::borrow(&b.list, i);
+                let j = 0;
+                while (j < len) {
+                    let ben = vector::borrow(&b.list, j);
                     acc = acc + (ben.percentage as u64);
-                    i = i + 1;
+                    j = j + 1;
                 };
                 acc
             };
@@ -124,6 +135,59 @@ module srujan_addr::deadlock1 {
         }
     }
 
+    /// Get beneficiaries in frontend-friendly format (addresses and percentages as separate vectors)
+    #[view]
+    public fun get_beneficiaries_details(addr: address): (vector<address>, vector<u8>) acquires Beneficiaries {
+        if (exists<Beneficiaries>(addr)) {
+            let b = borrow_global<Beneficiaries>(addr);
+            let len = vector::length(&b.list);
+            let addresses = vector::empty<address>();
+            let percentages = vector::empty<u8>();
+            
+            let i = 0;
+            while (i < len) {
+                let beneficiary = vector::borrow(&b.list, i);
+                vector::push_back(&mut addresses, beneficiary.addr);
+                vector::push_back(&mut percentages, beneficiary.percentage);
+                i = i + 1;
+            };
+            
+            (addresses, percentages)
+        } else {
+            (vector::empty<address>(), vector::empty<u8>())
+        }
+    }
+
+    /// Get total number of beneficiaries added by this user
+    #[view]
+    public fun get_beneficiaries_count(addr: address): u64 acquires Beneficiaries {
+        if (exists<Beneficiaries>(addr)) {
+            let b = borrow_global<Beneficiaries>(addr);
+            vector::length(&b.list)
+        } else {
+            0
+        }
+    }
+
+    #[view]
+    public fun beneficiary_exists(user_addr: address, beneficiary_addr: address): bool acquires Beneficiaries {
+        if (exists<Beneficiaries>(user_addr)) {
+            let b = borrow_global<Beneficiaries>(user_addr);
+            let len = vector::length(&b.list);
+            let i = 0;
+            while (i < len) {
+                let ben = vector::borrow(&b.list, i);
+                if (ben.addr == beneficiary_addr) {
+                    return true
+                };
+                i = i + 1;
+            };
+            false
+        } else {
+            false
+        }
+    }
+
     #[view]
     public fun get_added_as_beneficiary(addr: address): vector<OwnerEntry> acquires GlobalIndex {
         if (exists<GlobalIndex>(@srujan_addr)) {
@@ -136,6 +200,110 @@ module srujan_addr::deadlock1 {
         } else {
             vector::empty<OwnerEntry>()
         }
+    }
+
+    /// Check if someone has been added as a beneficiary by anyone
+    #[view]
+    public fun has_been_added_as_beneficiary(addr: address): bool acquires GlobalIndex {
+        if (exists<GlobalIndex>(@srujan_addr)) {
+            let global_index = borrow_global<GlobalIndex>(@srujan_addr);
+            table::contains(&global_index.map, addr)
+        } else {
+            false
+        }
+    }
+
+    /// Get the total number of people who added this address as beneficiary
+    #[view]
+    public fun get_beneficiary_owners_count(addr: address): u64 acquires GlobalIndex {
+        if (exists<GlobalIndex>(@srujan_addr)) {
+            let global_index = borrow_global<GlobalIndex>(@srujan_addr);
+            if (table::contains(&global_index.map, addr)) {
+                let owners = table::borrow(&global_index.map, addr);
+                vector::length(owners)
+            } else {
+                0
+            }
+        } else {
+            0
+        }
+    }
+
+    /// Get detailed info about who added this address as beneficiary with their percentages
+    #[view]
+    public fun get_beneficiary_details(addr: address): vector<OwnerEntry> acquires GlobalIndex {
+        get_added_as_beneficiary(addr)
+    }
+
+    /// Get unclaimed inheritance information for a specific address
+    #[view]
+    public fun get_unclaimed_inheritances(addr: address): vector<OwnerEntry> acquires GlobalIndex {
+        if (exists<GlobalIndex>(@srujan_addr)) {
+            let global_index = borrow_global<GlobalIndex>(@srujan_addr);
+            if (table::contains(&global_index.map, addr)) {
+                let owners = table::borrow(&global_index.map, addr);
+                let unclaimed = vector::empty<OwnerEntry>();
+                let len = vector::length(owners);
+                let i = 0;
+                while (i < len) {
+                    let owner_entry = vector::borrow(owners, i);
+                    if (!owner_entry.claimed) {
+                        vector::push_back(&mut unclaimed, *owner_entry);
+                    };
+                    i = i + 1;
+                };
+                unclaimed
+            } else {
+                vector::empty<OwnerEntry>()
+            }
+        } else {
+            vector::empty<OwnerEntry>()
+        }
+    }
+
+    /// Get the total percentage this address can inherit (from all unclaimed sources)
+    #[view]
+    public fun get_total_inheritable_percentage(addr: address): u64 acquires GlobalIndex {
+        let unclaimed = get_unclaimed_inheritances(addr);
+        let total_percentage = 0u64;
+        let len = vector::length(&unclaimed);
+        let i = 0;
+        while (i < len) {
+            let owner_entry = vector::borrow(&unclaimed, i);
+            total_percentage = total_percentage + (owner_entry.percentage as u64);
+            i = i + 1;
+        };
+        total_percentage
+    }
+
+    /// Get owner entry details as tuple (owner, percentage, claimed) by index
+    #[view]
+    public fun get_owner_entry_details_by_index(addr: address, index: u64): (address, u8, bool) acquires GlobalIndex {
+        let owners = get_added_as_beneficiary(addr);
+        assert!(index < vector::length(&owners), 9001); // Index out of bounds
+        let owner_entry = vector::borrow(&owners, index);
+        (owner_entry.owner, owner_entry.percentage, owner_entry.claimed)
+    }
+
+    /// Get all owner entries details as vectors for easier frontend consumption
+    #[view]
+    public fun get_all_owner_entries_details(addr: address): (vector<address>, vector<u8>, vector<bool>) acquires GlobalIndex {
+        let owners = get_added_as_beneficiary(addr);
+        let len = vector::length(&owners);
+        let owners_addrs = vector::empty<address>();
+        let percentages = vector::empty<u8>();
+        let claimed_statuses = vector::empty<bool>();
+        
+        let i = 0;
+        while (i < len) {
+            let owner_entry = vector::borrow(&owners, i);
+            vector::push_back(&mut owners_addrs, owner_entry.owner);
+            vector::push_back(&mut percentages, owner_entry.percentage);
+            vector::push_back(&mut claimed_statuses, owner_entry.claimed);
+            i = i + 1;
+        };
+        
+        (owners_addrs, percentages, claimed_statuses)
     }
 
     /// Claim inherited funds from someone who added you as beneficiary
@@ -216,6 +384,8 @@ module srujan_addr::deadlock1 {
     const EINSUFFICIENT_BALANCE: u64 = 1;
     const EINVALID_PERCENTAGE: u64 = 2;
     const EOVER_PERCENTAGE: u64 = 3;
+    const EDUPLICATE_BENEFICIARY: u64 = 4;
+    const EBENEFICIARY_NOT_FOUND: u64 = 5;
 
 public entry fun lock_funds(user: &signer, amount: u64) acquires LockedFunds {
     let addr = signer::address_of(user);
@@ -327,7 +497,7 @@ public entry fun lock_funds(user: &signer, amount: u64) acquires LockedFunds {
         )
     }
 
-    public entry fun update_beneficiary(user: &signer, beneficiary_addr: address, new_percentage: u8) acquires Beneficiaries {
+    public entry fun update_beneficiary(user: &signer, beneficiary_addr: address, new_percentage: u8) acquires Beneficiaries, GlobalIndex {
         let user_addr = signer::address_of(user);
         assert!(exists<Beneficiaries>(user_addr), 1001); // 1001 = No beneficiaries
         let b = borrow_global_mut<Beneficiaries>(user_addr);
@@ -348,9 +518,9 @@ public entry fun lock_funds(user: &signer, amount: u64) acquires LockedFunds {
             found_index
         };
 
-        // Return early if beneficiary not found
+        // Abort if beneficiary not found
         if (exists_at == len) {
-            return
+            abort EBENEFICIARY_NOT_FOUND
         };
 
         // Calculate total percentages with the new percentage
@@ -376,6 +546,73 @@ public entry fun lock_funds(user: &signer, amount: u64) acquires LockedFunds {
 
         // Update the beneficiary's percentage
         let ben = vector::borrow_mut(&mut b.list, exists_at);
-        ben.percentage = new_percentage
+        ben.percentage = new_percentage;
+
+        // Also update the percentage in the global index
+        if (exists<GlobalIndex>(@srujan_addr)) {
+            let global_index = borrow_global_mut<GlobalIndex>(@srujan_addr);
+            if (table::contains(&global_index.map, beneficiary_addr)) {
+                let owners = table::borrow_mut(&mut global_index.map, beneficiary_addr);
+                let owners_len = vector::length(owners);
+                let i = 0;
+                while (i < owners_len) {
+                    let owner_entry = vector::borrow_mut(owners, i);
+                    if (owner_entry.owner == user_addr) {
+                        owner_entry.percentage = new_percentage;
+                        break
+                    };
+                    i = i + 1;
+                };
+            };
+        }
+    }
+
+    /// Remove a beneficiary from the user's list
+    public entry fun remove_beneficiary(user: &signer, beneficiary_addr: address) acquires Beneficiaries, GlobalIndex {
+        let user_addr = signer::address_of(user);
+        assert!(exists<Beneficiaries>(user_addr), 1001); // No beneficiaries
+        
+        let b = borrow_global_mut<Beneficiaries>(user_addr);
+        let len = vector::length(&b.list);
+        
+        // Find and remove beneficiary from user's list
+        let i = 0;
+        let found = false;
+        while (i < len) {
+            let ben = vector::borrow(&b.list, i);
+            if (ben.addr == beneficiary_addr) {
+                vector::remove(&mut b.list, i);
+                found = true;
+                break
+            };
+            i = i + 1;
+        };
+        
+        if (!found) {
+            abort EBENEFICIARY_NOT_FOUND
+        };
+
+        // Also remove from global index
+        if (exists<GlobalIndex>(@srujan_addr)) {
+            let global_index = borrow_global_mut<GlobalIndex>(@srujan_addr);
+            if (table::contains(&global_index.map, beneficiary_addr)) {
+                let owners = table::borrow_mut(&mut global_index.map, beneficiary_addr);
+                let owners_len = vector::length(owners);
+                let i = 0;
+                while (i < owners_len) {
+                    let owner_entry = vector::borrow(owners, i);
+                    if (owner_entry.owner == user_addr) {
+                        vector::remove(owners, i);
+                        break
+                    };
+                    i = i + 1;
+                };
+                
+                // If no more owners for this beneficiary, remove the entire entry
+                if (vector::is_empty(owners)) {
+                    table::remove(&mut global_index.map, beneficiary_addr);
+                };
+            };
+        }
     }
 }

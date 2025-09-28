@@ -4,14 +4,14 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Shield, Key, Bell, Loader2, Lock } from "lucide-react";
+import { Shield, Key, Bell, Loader2, Lock, Wallet } from "lucide-react";
 import { AptosClient } from "aptos";
 import { NETWORK, MODULE_ADDRESS } from "../constants";
 import { useEffect, useState } from "react";
 import { toast } from "@/components/ui/use-toast";
 
 const NODE_URL = `https://fullnode.${NETWORK}.aptoslabs.com/v1`;
-const MODULE_NAME = "deadlock1";
+const MODULE_NAME = "deadlock_v2";
 
 const client = new AptosClient(NODE_URL);
 
@@ -30,6 +30,7 @@ const Profile = () => {
   const [isLocking, setIsLocking] = useState(false);
   const [lockSuccess, setLockSuccess] = useState(false);
   const [walletBalance, setWalletBalance] = useState(0);
+  const [isClaimingFunds, setIsClaimingFunds] = useState<{[key: string]: boolean}>({});
 
   // Get wallet address from localStorage
   useEffect(() => {
@@ -175,6 +176,68 @@ const Profile = () => {
       setIsLocking(false);
       setLockSuccess(false);
       toast({ title: "Error", description: error?.message || "Failed to lock funds", variant: "destructive" });
+    }
+  };
+
+  const handleClaimFunds = async (ownerAddress: string, uniqueKey: string) => {
+    console.log("Starting claim for owner:", ownerAddress, "with key:", uniqueKey);
+    console.log("Current claiming states:", isClaimingFunds);
+    
+    setIsClaimingFunds(prev => {
+      // Reset all to false, then set only the clicked one to true
+      const newState: {[key: string]: boolean} = {};
+      Object.keys(prev).forEach(key => { newState[key] = false; });
+      newState[uniqueKey] = true;
+      console.log("Setting claiming state to:", newState);
+      return newState;
+    });
+    
+    let txHash = null;
+    
+    try {
+      if (!walletAddress || !ownerAddress) throw new Error("Wallet address or owner address missing");
+      if (!MODULE_ADDRESS) {
+        toast({ title: "Error", description: "Contract address not configured. Please set VITE_MODULE_ADDRESS and restart the app.", variant: "destructive" });
+        throw new Error("Contract address not configured");
+      }
+
+      const payload = {
+        type: "entry_function_payload",
+        function: `${MODULE_ADDRESS}::${MODULE_NAME}::claim_inheritance`,
+        type_arguments: [],
+        arguments: [ownerAddress],
+      };
+
+      const response = await (window as any).aptos.signAndSubmitTransaction(payload);
+      txHash = response?.hash;
+      
+      if (!txHash) throw new Error("Transaction failed. No hash returned.");
+      
+      await client.waitForTransaction(txHash);
+      
+      toast({ 
+        title: "Funds Claimed Successfully!", 
+        description: `Transaction Hash: ${txHash.slice(0, 10)}...`, 
+        variant: "default" 
+      });
+      
+      // Refresh the page after successful claim
+      setTimeout(() => window.location.reload(), 1200);
+      
+    } catch (error: any) {
+      console.error("Error claiming funds:", error);
+      toast({ 
+        title: "Error Claiming Funds", 
+        description: error?.message || "Failed to claim funds. Please try again.", 
+        variant: "destructive" 
+      });
+    } finally {
+      console.log("Resetting claiming state for key:", uniqueKey);
+      setIsClaimingFunds(prev => {
+        const newState = { ...prev, [uniqueKey]: false };
+        console.log("Final claiming state:", newState);
+        return newState;
+      });
     }
   };
 
@@ -349,21 +412,46 @@ const Profile = () => {
                 {ownersWhoAddedMe.length > 0 ? (
                   <div className="space-y-3">
                     <h3 className="text-sm font-medium text-muted-foreground">You are a beneficiary for:</h3>
-                    {ownersWhoAddedMe.map((owner, index) => (
-                      <div key={index} className="flex items-center justify-between p-4 border rounded-lg bg-gradient-to-r from-green-50 to-blue-50 border-green-200">
-                        <div className="space-y-1 flex-1">
-                          <h4 className="font-medium text-green-800">Added by:</h4>
-                          <p className="text-sm font-mono text-muted-foreground break-all">{owner.owner}</p>
-                          <p className="text-xs text-green-600">You will inherit {owner.percentage}% of their funds</p>
+                    {ownersWhoAddedMe.map((owner, index) => {
+                      const uniqueKey = `${owner.owner}-${index}`;
+                      const isThisButtonLoading = isClaimingFunds[uniqueKey] === true;
+                      console.log(`Button for owner ${owner.owner} (index ${index}) with key ${uniqueKey}: loading = ${isThisButtonLoading}`);
+                      
+                      return (
+                        <div key={uniqueKey} className="flex items-center justify-between p-4 border rounded-lg bg-gradient-to-r from-green-50 to-blue-50 border-green-200">
+                          <div className="space-y-1 flex-1">
+                            <h4 className="font-medium text-green-800">Added by:</h4>
+                            <p className="text-sm font-mono text-muted-foreground break-all">{owner.owner}</p>
+                            <p className="text-xs text-green-600">You will inherit {owner.percentage}% of their funds</p>
+                          </div>
+                          <div className="flex flex-col items-end ml-4 space-y-2">
+                            <Badge variant="outline" className="text-green-600 border-green-300 bg-green-50 text-lg px-3 py-1">
+                              {owner.percentage}%
+                            </Badge>
+                            <span className="text-xs text-muted-foreground">inheritance share</span>
+                            <Button
+                              onClick={() => handleClaimFunds(owner.owner, uniqueKey)}
+                              disabled={isThisButtonLoading}
+                              variant="default"
+                              size="sm"
+                              className="bg-green-600 hover:bg-green-700 text-white disabled:opacity-50"
+                            >
+                              {isThisButtonLoading ? (
+                                <>
+                                  <Loader2 className="animate-spin h-3 w-3 mr-1" />
+                                  Claiming...
+                                </>
+                              ) : (
+                                <>
+                                  <Wallet className="h-3 w-3 mr-1" />
+                                  Get My Funds
+                                </>
+                              )}
+                            </Button>
+                          </div>
                         </div>
-                        <div className="flex flex-col items-end ml-4">
-                          <Badge variant="outline" className="text-green-600 border-green-300 bg-green-50 text-lg px-3 py-1">
-                            {owner.percentage}%
-                          </Badge>
-                          <span className="text-xs text-muted-foreground mt-1">inheritance share</span>
-                        </div>
-                      </div>
-                    ))}
+                      );
+                    })}
                     <div className="mt-4 p-3 bg-blue-50 border border-blue-200 rounded-lg">
                       <p className="text-sm text-blue-800">
                         <strong>Total records:</strong> {ownersWhoAddedMe.length} {ownersWhoAddedMe.length === 1 ? 'person has' : 'people have'} added you as beneficiary

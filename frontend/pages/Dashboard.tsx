@@ -31,8 +31,36 @@ const Dashboard = () => {
   });
 
   const NODE_URL = `https://fullnode.${NETWORK}.aptoslabs.com/v1`;
-  const MODULE_NAME = "deadlock1";
+  const MODULE_NAME = "deadlock_v2";
   const client = new AptosClient(NODE_URL);
+
+  // Initialize global index if needed (only contract deployer can do this)
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  const initializeGlobalIndex = async () => {
+    try {
+      if (!(window as any).aptos) throw new Error("Wallet not connected");
+      if (!MODULE_ADDRESS) throw new Error("Contract address not configured");
+
+      const payload = {
+        type: "entry_function_payload",
+        function: `${MODULE_ADDRESS}::${MODULE_NAME}::initialize_global_index`,
+        type_arguments: [],
+        arguments: [],
+      };
+      
+      const response = await (window as any).aptos.signAndSubmitTransaction(payload);
+      if (!response?.hash) throw new Error("Transaction failed");
+      await client.waitForTransaction(response.hash);
+      
+      toast({ 
+        title: "Global Index Initialized", 
+        description: `Transaction Hash: ${response.hash.slice(0, 10)}...` 
+      });
+    } catch (err: any) {
+      // It's okay if this fails - it might already be initialized or user might not be the deployer
+      console.log("Global index initialization:", err?.message);
+    }
+  };
 
   // Get wallet address from localStorage (set by Navigation)
   useEffect(() => {
@@ -73,25 +101,27 @@ const Dashboard = () => {
     fetchWalletData();
   }, [wallet.address]);
 
+  // Function to refresh beneficiaries from chain
+  const refreshBeneficiaries = async () => {
+    if (!wallet.address || !MODULE_ADDRESS) return;
+    setLoadingBeneficiaries(true);
+    try {
+      const result = await client.view({
+        function: `${MODULE_ADDRESS}::${MODULE_NAME}::get_beneficiaries`,
+        type_arguments: [],
+        arguments: [wallet.address],
+      });
+      // result[0] is vector<Beneficiary> with { addr, percentage }
+      setBeneficiaries(result.length > 0 ? result[0] as Beneficiary[] : []);
+    } catch (err) {
+      setBeneficiaries([]);
+    }
+    setLoadingBeneficiaries(false);
+  };
+
   // Fetch on-chain beneficiaries for this user
   useEffect(() => {
-    const fetchBeneficiaries = async () => {
-      if (!wallet.address || !MODULE_ADDRESS) return;
-      setLoadingBeneficiaries(true);
-      try {
-        const result = await client.view({
-          function: `${MODULE_ADDRESS}::${MODULE_NAME}::get_beneficiaries`,
-          type_arguments: [],
-          arguments: [wallet.address],
-        });
-        // result[0] is vector<Beneficiary> with { addr, percentage }
-        setBeneficiaries(result.length > 0 ? result[0] as Beneficiary[] : []);
-      } catch (err) {
-        setBeneficiaries([]);
-      }
-      setLoadingBeneficiaries(false);
-    };
-    fetchBeneficiaries();
+    refreshBeneficiaries();
   }, [wallet.address]);
 
   const handleOpenForm = (index: number | null = null) => {
@@ -131,6 +161,21 @@ const Dashboard = () => {
     }
   };
 
+  // Check if beneficiary already exists
+  const checkBeneficiaryExists = async (beneficiaryAddr: string): Promise<boolean> => {
+    try {
+      const result = await client.view({
+        function: `${MODULE_ADDRESS}::${MODULE_NAME}::beneficiary_exists`,
+        type_arguments: [],
+        arguments: [wallet.address, beneficiaryAddr],
+      });
+      return result[0] as boolean;
+    } catch (error) {
+      console.error("Error checking beneficiary existence:", error);
+      return false;
+    }
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!form.address || !form.percentage) return;
@@ -138,21 +183,32 @@ const Dashboard = () => {
       if (!(window as any).aptos) throw new Error("Wallet not connected");
       if (!MODULE_ADDRESS) throw new Error("Contract address not configured");
 
-      // Check if the percentage would exceed 100%
-      const wouldExceed = await checkPercentage(form.address, Number(form.percentage));
-      if (wouldExceed) {
-        toast({
-          variant: "destructive",
-          title: "Percentage Error",
-          description: "Total beneficiary percentages would exceed 100%. Please adjust the percentage.",
-        });
-        return;
-      }
-
       let payload;
       let toastMsg;
+      
       if (editIndex !== null) {
         // Update existing beneficiary
+        // Validate that we're updating the correct beneficiary
+        if (editIndex >= beneficiaries.length || beneficiaries[editIndex].addr !== form.address) {
+          toast({
+            variant: "destructive",
+            title: "Validation Error",
+            description: "Beneficiary data is out of sync. Please refresh the page and try again.",
+          });
+          return;
+        }
+        
+        // Check if the percentage would exceed 100%
+        const wouldExceed = await checkPercentage(form.address, Number(form.percentage));
+        if (wouldExceed) {
+          toast({
+            variant: "destructive",
+            title: "Percentage Error",
+            description: "Total beneficiary percentages would exceed 100%. Please adjust the percentage.",
+          });
+          return;
+        }
+
         payload = {
           type: "entry_function_payload",
           function: `${MODULE_ADDRESS}::${MODULE_NAME}::update_beneficiary`,
@@ -161,7 +217,28 @@ const Dashboard = () => {
         };
         toastMsg = "Beneficiary Updated!";
       } else {
-        // Add new beneficiary
+        // Add new beneficiary - check for duplicates first
+        const alreadyExists = await checkBeneficiaryExists(form.address);
+        if (alreadyExists) {
+          toast({
+            variant: "destructive",
+            title: "Duplicate Beneficiary",
+            description: "This beneficiary already exists, you can update it from below.",
+          });
+          return;
+        }
+
+        // Check if the percentage would exceed 100%
+        const wouldExceed = await checkPercentage(form.address, Number(form.percentage));
+        if (wouldExceed) {
+          toast({
+            variant: "destructive",
+            title: "Percentage Error",
+            description: "Total beneficiary percentages would exceed 100%. Please adjust the percentage.",
+          });
+          return;
+        }
+
         payload = {
           type: "entry_function_payload",
           function: `${MODULE_ADDRESS}::${MODULE_NAME}::add_beneficiary`,
@@ -170,20 +247,41 @@ const Dashboard = () => {
         };
         toastMsg = "Beneficiary Added!";
       }
+      
       const response = await (window as any).aptos.signAndSubmitTransaction(payload);
       if (!response?.hash) throw new Error("Transaction failed");
       await client.waitForTransaction(response.hash);
+      
       toast({ title: toastMsg, description: `Transaction Hash: ${response.hash.slice(0, 10)}...` });
-      // Refresh beneficiaries from chain
-      const result = await client.view({
-        function: `${MODULE_ADDRESS}::${MODULE_NAME}::get_beneficiaries`,
-        type_arguments: [],
-        arguments: [wallet.address],
-      });
-      setBeneficiaries(result.length > 0 ? result[0] as Beneficiary[] : []);
+      
+      // Small delay to ensure transaction is fully processed before refreshing
+      setTimeout(async () => {
+        await refreshBeneficiaries();
+      }, 1000);
+      
       handleCloseForm();
     } catch (err: any) {
-      toast({ title: "Error", description: err?.message || "Failed to add/update beneficiary", variant: "destructive" });
+      // Handle specific error codes from smart contract
+      let errorMessage = err?.message || "Failed to add/update beneficiary";
+      
+      // Check if the error contains the EDUPLICATE_BENEFICIARY abort code
+      if (err?.message?.includes("EDUPLICATE_BENEFICIARY") || err?.message?.includes("4")) {
+        errorMessage = "This beneficiary already exists, you can update it from below.";
+      }
+      // Check if the error contains the EBENEFICIARY_NOT_FOUND abort code
+      else if (err?.message?.includes("EBENEFICIARY_NOT_FOUND") || err?.message?.includes("5")) {
+        errorMessage = "Beneficiary not found. Please refresh the page and try again.";
+      }
+      // Check if the error contains the EOVER_PERCENTAGE abort code
+      else if (err?.message?.includes("EOVER_PERCENTAGE") || err?.message?.includes("3")) {
+        errorMessage = "Total beneficiary percentages would exceed 100%. Please adjust the percentage.";
+      }
+      
+      toast({ 
+        title: "Error", 
+        description: errorMessage, 
+        variant: "destructive" 
+      });
     }
   };
 
@@ -337,8 +435,19 @@ const Dashboard = () => {
         <Card className="neon-border">
           <CardHeader className="flex flex-row items-center justify-between">
             <CardTitle>Beneficiaries</CardTitle>
-            <div className="text-sm text-muted-foreground">
-              Total Allocated: <span className="font-semibold text-primary">{beneficiaries.reduce((sum, b) => sum + b.percentage, 0)}%</span>
+            <div className="flex items-center gap-4">
+              <div className="text-sm text-muted-foreground">
+                Total Allocated: <span className="font-semibold text-primary">{beneficiaries.reduce((sum, b) => sum + b.percentage, 0)}%</span>
+              </div>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={refreshBeneficiaries}
+                disabled={loadingBeneficiaries}
+                className="h-8 px-3"
+              >
+                {loadingBeneficiaries ? "Refreshing..." : "Refresh"}
+              </Button>
             </div>
           </CardHeader>
           <CardContent className="p-4 sm:p-6">
