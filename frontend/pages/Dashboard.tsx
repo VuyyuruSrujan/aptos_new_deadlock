@@ -124,7 +124,47 @@ const Dashboard = () => {
     refreshBeneficiaries();
   }, [wallet.address]);
 
-  const handleOpenForm = (index: number | null = null) => {
+  const handleOpenForm = async (index: number | null = null) => {
+    // Check if user has locked funds before adding beneficiaries
+    if (index === null) { // Only check for new beneficiaries, not when editing existing ones
+      try {
+        if (!wallet.address || !MODULE_ADDRESS) {
+          toast({ 
+            title: "Wallet Not Connected", 
+            description: "Please connect your wallet first.", 
+            variant: "destructive" 
+          });
+          return;
+        }
+
+        // Get locked funds from smart contract
+        const lockedResult = await client.view({
+          function: `${MODULE_ADDRESS}::${MODULE_NAME}::get_locked_funds`,
+          type_arguments: [],
+          arguments: [wallet.address],
+        });
+        
+        const lockedApt = lockedResult && lockedResult[0] ? Number(lockedResult[0]) / 1e8 : 0;
+        
+        if (lockedApt < 0.1) {
+          toast({ 
+            title: "Insufficient Locked Funds", 
+            description: "You must lock at least 0.1 APT before adding beneficiaries. Please go to Profile → Lock Funds first.", 
+            variant: "destructive" 
+          });
+          return;
+        }
+      } catch (error) {
+        console.error("Error checking locked funds:", error);
+        toast({ 
+          title: "Error", 
+          description: "Unable to verify locked funds. Please try again.", 
+          variant: "destructive" 
+        });
+        return;
+      }
+    }
+
     setEditIndex(index);
     if (index !== null) {
       setForm({

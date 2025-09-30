@@ -4,7 +4,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Shield, Key, Bell, Loader2, Lock, Wallet } from "lucide-react";
+import { Shield, Key, Bell, Loader2, Lock, Wallet, Plus, Send, Copy } from "lucide-react";
 import { AptosClient } from "aptos";
 import { NETWORK, MODULE_ADDRESS } from "../constants";
 import { useEffect, useState } from "react";
@@ -38,11 +38,23 @@ const Profile = () => {
   const [isEditing, setIsEditing] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
 
-  // Get wallet address from localStorage
+  // State for Subaccount Management
+  const [hasSubaccount, setHasSubaccount] = useState(false);
+  const [isCreatingSubaccount, setIsCreatingSubaccount] = useState(false);
+  const [subaccountAddress, setSubaccountAddress] = useState("");
+  const [subaccountBalance, setSubaccountBalance] = useState(0);
+  const [subaccountCreatedAt, setSubaccountCreatedAt] = useState(0);
+  const [transferAmount, setTransferAmount] = useState("");
+  const [transferToAddress, setTransferToAddress] = useState("");
+  const [isTransferring, setIsTransferring] = useState(false);
+
+    // Get wallet address from localStorage
   useEffect(() => {
-    const addr = localStorage.getItem("walletAddress") || "";
-    console.log("Retrieved wallet address from localStorage:", addr);
-    setWalletAddress(addr);
+    const storedAddress = localStorage.getItem("walletAddress");
+    if (storedAddress) {
+      setWalletAddress(storedAddress);
+      checkSubaccountExists(storedAddress);
+    }
   }, []);
 
   // Fetch who added me as beneficiary
@@ -144,6 +156,46 @@ const Profile = () => {
     fetchUserBalance();
   }, [walletAddress]);
 
+  // Fetch existing deadlock configuration
+  const fetchDeadlockConfig = async () => {
+    if (!walletAddress || !MODULE_ADDRESS) return;
+    try {
+      console.log("Fetching deadlock config for:", walletAddress);
+      const result = await client.view({
+        function: `${MODULE_ADDRESS}::${MODULE_NAME}::get_deadlock_config_precise`,
+        type_arguments: [],
+        arguments: [walletAddress],
+      });
+      
+      console.log("Deadlock config result:", result);
+      
+      if (result && result[1] && Number(result[1]) > 0) {
+        const seconds = Number(result[1]);
+        const days = seconds / 86400; // Convert seconds back to days (with decimals)
+        // Keep more precision - round to 6 decimal places to handle very small values
+        const preciseDays = Math.round(days * 1000000) / 1000000; 
+        console.log("Found existing config:", preciseDays, "days (", seconds, "seconds)");
+        setSavedInactiveDays(preciseDays);
+        setIsEditing(false); // Show display mode if config exists
+      } else {
+        console.log("No existing config found, showing input mode");
+        setIsEditing(true); // Show input mode if no config exists
+      }
+    } catch (err) {
+      console.error("Error fetching deadlock config:", err);
+      setIsEditing(true); // Default to input mode on error
+    }
+  };
+
+  useEffect(() => {
+    fetchDeadlockConfig();
+  }, [walletAddress]);
+
+  // Check for existing subaccount
+  useEffect(() => {
+    checkSubaccountExists();
+  }, [walletAddress]);
+
   const handleLockFunds = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsLocking(true);
@@ -155,6 +207,46 @@ const Profile = () => {
       if (amountNum > walletBalance) {
         toast({ title: "Insufficient Balance", description: "You do not have enough balance to lock this amount.", variant: "destructive" });
         setIsLocking(false);
+        return;
+      }
+      
+      // Check if user has completed profile setup (deadlock configuration) from smart contract
+      try {
+        const configResult = await client.view({
+          function: `${MODULE_ADDRESS}::${MODULE_NAME}::has_deadlock_config`,
+          type_arguments: [],
+          arguments: [walletAddress],
+        });
+        
+        const hasConfig = configResult && configResult[0] === true;
+        
+        if (!hasConfig) {
+          toast({ 
+            title: "Profile Setup Required", 
+            description: "Please complete your Profile Setup first to set the inactivity period before locking funds.", 
+            variant: "destructive" 
+          });
+          setIsLocking(false);
+          // Switch to Profile Setup tab
+          const profileSetupTab = document.querySelector('[value="security"]');
+          if (profileSetupTab) {
+            (profileSetupTab as HTMLElement).click();
+          }
+          return;
+        }
+      } catch (configError) {
+        console.error("Error checking deadlock config:", configError);
+        toast({ 
+          title: "Profile Setup Required", 
+          description: "Please complete your Profile Setup first to set the inactivity period before locking funds.", 
+          variant: "destructive" 
+        });
+        setIsLocking(false);
+        // Switch to Profile Setup tab
+        const profileSetupTab = document.querySelector('[value="security"]');
+        if (profileSetupTab) {
+          (profileSetupTab as HTMLElement).click();
+        }
         return;
       }
       if (!MODULE_ADDRESS) {
@@ -185,29 +277,144 @@ const Profile = () => {
     }
   };
 
+  const handleDepositToSubaccount = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setIsLocking(true);
+    setLockSuccess(false);
+    
+    try {
+      const amountNum = Number(lockAmount);
+      if (!walletAddress || !amountNum) throw new Error("Wallet address or amount missing");
+      
+      if (amountNum > walletBalance) {
+        toast({ 
+          title: "Insufficient Balance", 
+          description: "You do not have enough balance to deposit this amount.", 
+          variant: "destructive" 
+        });
+        setIsLocking(false);
+        return;
+      }
+
+      if (!hasSubaccount) {
+        toast({ 
+          title: "Subaccount Required", 
+          description: "Please create a subaccount first before depositing funds.", 
+          variant: "destructive" 
+        });
+        setIsLocking(false);
+        return;
+      }
+
+      if (!MODULE_ADDRESS) {
+        toast({ 
+          title: "Error", 
+          description: "Contract address not configured. Please set VITE_MODULE_ADDRESS and restart the app.", 
+          variant: "destructive" 
+        });
+        setIsLocking(false);
+        return;
+      }
+
+      // Convert APT to Octas (1 APT = 10^8 Octas)
+      const amountInOctas = (amountNum * 100000000).toString();
+      
+      const payload = {
+        type: "entry_function_payload",
+        function: `${MODULE_ADDRESS}::${MODULE_NAME}::deposit_to_subaccount`,
+        type_arguments: [],
+        arguments: [amountInOctas],
+      };
+
+      const response = await (window as any).aptos.signAndSubmitTransaction(payload);
+      const txHash = response?.hash;
+      
+      if (!txHash) throw new Error("Transaction failed. No hash returned.");
+      
+      await client.waitForTransaction(txHash);
+      
+      // Refresh subaccount balance
+      await fetchSubaccountDetails();
+      
+      // Clear the input field
+      setLockAmount("");
+      
+      toast({ 
+        title: "Funds Deposited!", 
+        description: `${amountNum} APT deposited to subaccount. TX: ${txHash.slice(0, 10)}...`, 
+        variant: "default" 
+      });
+      
+      setLockSuccess(true);
+      
+    } catch (error: any) {
+      toast({ 
+        title: "Deposit Failed", 
+        description: error?.message || "Failed to deposit funds to subaccount", 
+        variant: "destructive" 
+      });
+    } finally {
+      setIsLocking(false);
+    }
+  };
+
   const handleSaveConfiguration = async () => {
-    if (!inactiveDays || Number(inactiveDays) < 1) {
+    const daysValue = parseFloat(inactiveDays);
+    if (!inactiveDays || isNaN(daysValue) || daysValue <= 0) {
       toast({ 
         title: "Invalid Input", 
-        description: "Please enter a valid number of days (minimum 1 day).", 
+        description: "Please enter a valid number of days (must be greater than 0).", 
         variant: "destructive" 
       });
       return;
     }
 
     setIsSaving(true);
+    let txHash = null;
     
-    // Simulate saving (since no backend/smart contract changes needed)
-    setTimeout(() => {
-      setSavedInactiveDays(Number(inactiveDays));
-      setIsEditing(false);
+    try {
+      if (!walletAddress) throw new Error("Wallet address not found");
+      if (!MODULE_ADDRESS) {
+        toast({ title: "Error", description: "Contract address not configured. Please set VITE_MODULE_ADDRESS and restart the app.", variant: "destructive" });
+        setIsSaving(false);
+        return;
+      }
+
+      // Convert decimal days to seconds for precise storage
+      const totalSeconds = Math.round(daysValue * 86400); // 86400 seconds per day, round to nearest second
+      
+      const payload = {
+        type: "entry_function_payload",
+        function: `${MODULE_ADDRESS}::${MODULE_NAME}::set_deadlock_config_seconds`,
+        type_arguments: [],
+        arguments: [totalSeconds.toString()],
+      };
+
+      const response = await (window as any).aptos.signAndSubmitTransaction(payload);
+      txHash = response?.hash;
+      
+      if (!txHash) throw new Error("Transaction failed. No hash returned.");
+      
+      await client.waitForTransaction(txHash);
+      
+      // Refresh configuration from blockchain to ensure accuracy
+      await fetchDeadlockConfig();
+      
       setIsSaving(false);
       toast({ 
         title: "Configuration Saved", 
-        description: `Inactivity period set to ${inactiveDays} days successfully.`, 
+        description: `Inactivity period set to ${daysValue} days successfully. TX: ${txHash.slice(0, 10)}...`, 
         variant: "default" 
       });
-    }, 1000);
+      
+    } catch (error: any) {
+      setIsSaving(false);
+      toast({ 
+        title: "Error Saving Configuration", 
+        description: error?.message || "Failed to save configuration. Please try again.", 
+        variant: "destructive" 
+      });
+    }
   };
 
   const handleUpdateConfiguration = () => {
@@ -218,6 +425,212 @@ const Profile = () => {
   const handleCancelEdit = () => {
     setIsEditing(false);
     setInactiveDays("");
+  };
+
+    // Subaccount Management Functions
+  const checkSubaccountExists = async (address?: string) => {
+    const addr = address || walletAddress;
+    console.log("Checking subaccount for address:", addr);
+    if (!addr || !MODULE_ADDRESS) {
+      console.log("Missing address or module address:", { addr, MODULE_ADDRESS });
+      return;
+    }
+    
+    try {
+      console.log("Calling has_subaccount view function...");
+      const result = await client.view({
+        function: `${MODULE_ADDRESS}::${MODULE_NAME}::has_subaccount`,
+        type_arguments: [],
+        arguments: [addr],
+      });
+      
+      console.log("has_subaccount result:", result);
+      
+      if (result && result[0] === true) {
+        console.log("Subaccount exists, fetching details...");
+        setHasSubaccount(true);
+        await fetchSubaccountDetails(addr);
+      } else {
+        console.log("No subaccount found");
+        setHasSubaccount(false);
+      }
+    } catch (error) {
+      console.error("Error checking subaccount:", error);
+      setHasSubaccount(false);
+    }
+  };
+
+  const fetchSubaccountDetails = async (address?: string) => {
+    const addr = address || walletAddress;
+    console.log("Fetching subaccount details for address:", addr);
+    if (!addr || !MODULE_ADDRESS) return;
+    
+    try {
+      console.log("Calling get_subaccount_details view function...");
+      const result = await client.view({
+        function: `${MODULE_ADDRESS}::${MODULE_NAME}::get_subaccount_details`,
+        type_arguments: [],
+        arguments: [addr],
+      });
+      
+      console.log("get_subaccount_details result:", result);
+      
+      if (result && result.length >= 3) {
+        const subaccountAddr = result[0] as string;
+        const balance = result[1] ? Number(result[1]) / 1e8 : 0; // Convert from Octas to APT
+        const createdAt = result[2] ? Number(result[2]) : 0;
+        
+        console.log("Setting subaccount data:", {
+          address: subaccountAddr,
+          balance,
+          createdAt
+        });
+        
+        setSubaccountAddress(subaccountAddr);
+        setSubaccountBalance(balance);
+        setSubaccountCreatedAt(createdAt);
+      } else {
+        console.log("Invalid or empty result from get_subaccount_details");
+      }
+    } catch (error) {
+      console.error("Error fetching subaccount details:", error);
+    }
+  };
+
+  const copyToClipboard = async (text: string) => {
+    try {
+      await navigator.clipboard.writeText(text);
+      toast({ 
+        title: "Copied!", 
+        description: "Address copied to clipboard", 
+        variant: "default" 
+      });
+    } catch (error) {
+      toast({ 
+        title: "Error", 
+        description: "Failed to copy to clipboard", 
+        variant: "destructive" 
+      });
+    }
+  };
+
+  const formatAddress = (address: string) => {
+    if (!address) return "";
+    return address.length > 20 
+      ? `${address.slice(0, 10)}...${address.slice(-6)}`
+      : address;
+  };
+
+  const handleCreateSubaccount = async () => {
+    if (!walletAddress) {
+      toast({ title: "Error", description: "Wallet address not found", variant: "destructive" });
+      return;
+    }
+
+    if (!MODULE_ADDRESS) {
+      toast({ title: "Error", description: "Contract address not configured", variant: "destructive" });
+      return;
+    }
+
+    setIsCreatingSubaccount(true);
+    
+    try {
+      const payload = {
+        type: "entry_function_payload",
+        function: `${MODULE_ADDRESS}::${MODULE_NAME}::create_subaccount`,
+        type_arguments: [],
+        arguments: [],
+      };
+
+      const response = await (window as any).aptos.signAndSubmitTransaction(payload);
+      const txHash = response?.hash;
+      
+      if (!txHash) throw new Error("Transaction failed. No hash returned.");
+      
+      await client.waitForTransaction(txHash);
+      
+      console.log("Subaccount creation transaction completed, refreshing data...");
+      
+      // Refresh subaccount data
+      await checkSubaccountExists();
+      
+      toast({ 
+        title: "Subaccount Created!", 
+        description: `Subaccount created successfully. TX: ${txHash.slice(0, 10)}...`, 
+        variant: "default" 
+      });
+      
+    } catch (error: any) {
+      toast({ 
+        title: "Error Creating Subaccount", 
+        description: error?.message || "Failed to create subaccount", 
+        variant: "destructive" 
+      });
+    } finally {
+      setIsCreatingSubaccount(false);
+    }
+  };
+
+  const handleTransferFromSubaccount = async (e: React.FormEvent) => {
+    e.preventDefault();
+    
+    if (!transferToAddress || !transferAmount) {
+      toast({ title: "Error", description: "Please fill in all transfer details", variant: "destructive" });
+      return;
+    }
+
+    if (!MODULE_ADDRESS) {
+      toast({ title: "Error", description: "Contract address not configured", variant: "destructive" });
+      return;
+    }
+
+    const amount = parseFloat(transferAmount);
+    if (amount <= 0 || amount > subaccountBalance) {
+      toast({ title: "Error", description: "Invalid transfer amount", variant: "destructive" });
+      return;
+    }
+
+    setIsTransferring(true);
+
+    try {
+      // Convert APT to Octas (1 APT = 10^8 Octas)
+      const amountInOctas = (amount * 100000000).toString();
+      
+      const payload = {
+        type: "entry_function_payload",
+        function: `${MODULE_ADDRESS}::${MODULE_NAME}::transfer_from_subaccount`,
+        type_arguments: [],
+        arguments: [transferToAddress, amountInOctas],
+      };
+
+      const response = await (window as any).aptos.signAndSubmitTransaction(payload);
+      const txHash = response?.hash;
+      
+      if (!txHash) throw new Error("Transaction failed. No hash returned.");
+      
+      await client.waitForTransaction(txHash);
+      
+      // Refresh subaccount details
+      await fetchSubaccountDetails();
+      
+      setTransferAmount("");
+      setTransferToAddress("");
+      
+      toast({ 
+        title: "Transfer Successful!", 
+        description: `${amount} APT transferred to ${transferToAddress}. TX: ${txHash.slice(0, 10)}...`, 
+        variant: "default" 
+      });
+      
+    } catch (error: any) {
+      toast({ 
+        title: "Transfer Failed", 
+        description: error?.message || "Failed to transfer funds", 
+        variant: "destructive" 
+      });
+    } finally {
+      setIsTransferring(false);
+    }
   };
 
   const handleClaimFunds = async (ownerAddress: string, uniqueKey: string) => {
@@ -289,11 +702,11 @@ const Profile = () => {
           <h1 className="text-3xl font-bold mb-2">Profile Settings</h1>
         </div>
 
-        <Tabs defaultValue="lock" className="space-y-6">
+        <Tabs defaultValue="subaccount" className="space-y-6">
           <TabsList className="grid w-full grid-cols-4">
-            <TabsTrigger value="lock">Lock Funds</TabsTrigger>
+            <TabsTrigger value="subaccount">Create Subaccount</TabsTrigger>
             <TabsTrigger value="security">Profile Setup</TabsTrigger>
-            <TabsTrigger value="wallets">Wallets</TabsTrigger>
+            <TabsTrigger value="lock">Deposit Funds</TabsTrigger>
             <TabsTrigger value="beneficiary-status">Who Added Me</TabsTrigger>
           </TabsList>
 
@@ -301,10 +714,10 @@ const Profile = () => {
             <Card>
               <CardHeader>
                 <CardTitle className="flex items-center gap-2">
-                  <Lock className="h-5 w-5" />
-                  Lock Funds
+                  <Send className="h-5 w-5" />
+                  Deposit to Subaccount
                 </CardTitle>
-                <CardDescription>Lock your funds securely in the contract</CardDescription>
+                <CardDescription>Transfer funds from your main wallet to your subaccount</CardDescription>
               </CardHeader>
               <CardContent className="space-y-6">
                 <div className="grid md:grid-cols-2 gap-6">
@@ -312,35 +725,52 @@ const Profile = () => {
                     <div className="text-xs text-muted-foreground">Connected Address</div>
                     <div className="font-mono break-all text-primary mb-2">{walletAddress}</div>
                     <div className="text-xs text-muted-foreground">Current Balance</div>
-                    <div className="font-bold mb-2">{walletBalance} APT</div>
-                    <div className="text-xs text-muted-foreground">Funds Locked Till Now</div>
-                    <div className="font-bold text-green-600">{locked} APT</div>
+                    <div className="font-bold mb-2">
+                      {walletBalance} APT 
+                      <span className="text-sm text-muted-foreground ml-2">
+                        (~${(walletBalance * 4.23).toFixed(2)} USD)
+                      </span>
+                    </div>
+                    <div className="text-xs text-muted-foreground">Subaccount Balance</div>
+                    <div className="font-bold text-blue-600">
+                      {subaccountBalance} APT
+                      <span className="text-sm text-muted-foreground ml-2">
+                        (~${(subaccountBalance * 4.23).toFixed(2)} USD)
+                      </span>
+                    </div>
                   </div>
-                  <form onSubmit={handleLockFunds} className="space-y-4 flex flex-col justify-center">
-                    <Label htmlFor="lockAmount">Amount to Lock</Label>
+                  <form onSubmit={handleDepositToSubaccount} className="space-y-4 flex flex-col justify-center">
+                    <Label htmlFor="depositAmount">Amount to Deposit</Label>
                     <Input
-                      id="lockAmount"
+                      id="depositAmount"
                       type="number"
+                      step="0.00000001"
+                      max={walletBalance}
                       value={lockAmount}
                       onChange={e => setLockAmount(e.target.value)}
-                      placeholder="Enter amount"
+                      placeholder="Enter amount to deposit"
                       required
-                      disabled={isLocking}
+                      disabled={isLocking || !hasSubaccount}
                     />
-                    <Button type="submit" disabled={isLocking || !lockAmount} variant="hero" className="flex items-center justify-center">
+                    {!hasSubaccount && (
+                      <p className="text-sm text-amber-600">
+                        ⚠️ Please create a subaccount first before depositing funds.
+                      </p>
+                    )}
+                    <Button type="submit" disabled={isLocking || !lockAmount || !hasSubaccount} className="bg-blue-600 hover:bg-blue-700 flex items-center justify-center">
                       {isLocking ? (
                         <>
-                          <Loader2 className="animate-spin h-4 w-4 mr-2" /> Locking...
+                          <Loader2 className="animate-spin h-4 w-4 mr-2" /> Depositing...
                         </>
                       ) : (
                         <>
-                          <Lock className="h-4 w-4 mr-2" /> Lock Funds
+                          <Send className="h-4 w-4 mr-2" /> Deposit to Subaccount
                         </>
                       )}
                     </Button>
                     {lockSuccess && (
-                      <div className="mt-2 flex items-center gap-2 animate-bounce text-green-600 font-semibold">
-                        <Lock className="h-4 w-4" /> Funds locked successfully!
+                      <div className="mt-2 flex items-center gap-2 animate-bounce text-blue-600 font-semibold">
+                        <Send className="h-4 w-4" /> Funds deposited successfully!
                       </div>
                     )}
                   </form>
@@ -379,8 +809,9 @@ const Profile = () => {
                           <Input 
                             id="inactiveDays" 
                             type="number" 
-                            placeholder="e.g., 365" 
-                            min="1"
+                            step="any"
+                            placeholder="e.g., 30 , 60 , 90 ,365" 
+                            min="0.000001"
                             max="3650"
                             value={inactiveDays}
                             onChange={(e) => setInactiveDays(e.target.value)}
@@ -388,7 +819,7 @@ const Profile = () => {
                             disabled={isSaving}
                           />
                           <p className="text-xs text-muted-foreground">
-                            After this many days without any transactions from your wallet, 
+                            After this many days (supports high precision decimals like 0.000694 days ≈ 1 minute) without any transactions from your wallet, 
                             the smart contract will consider you inactive and allow beneficiaries to claim inheritance.
                           </p>
                         </div>
@@ -487,45 +918,163 @@ const Profile = () => {
             </Card>
           </TabsContent>
 
-          <TabsContent value="wallets" className="space-y-6">
+          <TabsContent value="subaccount" className="space-y-6">
             <Card>
               <CardHeader>
                 <CardTitle className="flex items-center gap-2">
-                  <Key className="h-5 w-5" />
-                  Connected Wallets
+                  <Plus className="h-5 w-5" />
+                  Subaccount Management
                 </CardTitle>
-                <CardDescription>Manage your cryptocurrency wallets</CardDescription>
+                <CardDescription>
+                  Create and manage your deadlock subaccount for secure fund management
+                </CardDescription>
               </CardHeader>
-              <CardContent className="space-y-4">
-                <div className="flex items-center justify-between p-4 border rounded-lg">
-                  <div className="flex items-center gap-3">
-                    <div className="w-10 h-10 bg-orange-100 rounded-lg flex items-center justify-center">
-                      <span className="text-orange-600 font-bold">₿</span>
+              <CardContent className="space-y-6">
+                {!hasSubaccount ? (
+                  // Show create subaccount section
+                  <div className="text-center py-8">
+                    <div className="w-16 h-16 bg-primary/10 rounded-full flex items-center justify-center mb-4 mx-auto">
+                      <Plus className="h-8 w-8 text-primary" />
                     </div>
-                    <div>
-                      <h3 className="font-medium">Bitcoin Wallet</h3>
-                      <p className="text-sm text-muted-foreground">bc1q...xyz123</p>
+                    <h3 className="text-lg font-semibold mb-2">Create Your Subaccount</h3>
+                    <p className="text-muted-foreground mb-6 max-w-md mx-auto">
+                      Create a unique subaccount linked to your wallet address for managing your deadlock funds securely.
+                    </p>
+                    <Button 
+                      onClick={handleCreateSubaccount}
+                      disabled={isCreatingSubaccount}
+                      className="bg-primary hover:bg-primary/90"
+                    >
+                      {isCreatingSubaccount ? (
+                        <>
+                          <Loader2 className="animate-spin h-4 w-4 mr-2" />
+                          Creating Subaccount...
+                        </>
+                      ) : (
+                        <>
+                          <Plus className="h-4 w-4 mr-2" />
+                          Create Subaccount
+                        </>
+                      )}
+                    </Button>
+                  </div>
+                ) : (
+                  // Show subaccount details and transfer options
+                  <div className="space-y-6">
+                    {/* Subaccount Details */}
+                    <div className="p-6 border rounded-lg bg-gradient-to-r from-green-50 to-blue-50 dark:from-green-900/20 dark:to-blue-900/20 border-green-200 dark:border-green-800">
+                      <h3 className="font-semibold text-green-800 dark:text-green-300 mb-4 flex items-center gap-2">
+                        <Wallet className="h-5 w-5" />
+                        Your Subaccount Details
+                      </h3>
+                      
+                      <div className="space-y-3">
+                        <div>
+                          <Label className="text-sm text-muted-foreground">Subaccount Address</Label>
+                          <div className="flex items-center gap-2 mt-1">
+                            <code className="flex-1 p-3 bg-gray-100 dark:bg-gray-800 border rounded text-sm font-mono text-gray-900 dark:text-gray-100 break-all">
+                              {subaccountAddress}
+                            </code>
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={() => copyToClipboard(subaccountAddress)}
+                              className="shrink-0"
+                            >
+                              <Copy className="h-3 w-3" />
+                            </Button>
+                          </div>
+                        </div>
+                        
+                        <div className="p-3 bg-white/50 dark:bg-gray-900/50 rounded-lg border">
+                          <Label className="text-sm text-muted-foreground">Available Funds</Label>
+                          <div className="text-2xl font-bold text-green-600 dark:text-green-400 mt-1">
+                            {subaccountBalance} APT
+                          </div>
+                        </div>
+
+                        {subaccountCreatedAt > 0 && (
+                          <div className="text-xs text-muted-foreground">
+                            Created on: {new Date(subaccountCreatedAt * 1000).toLocaleString()}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Transfer Funds Section */}
+                    <Card>
+                      <CardHeader>
+                        <CardTitle className="flex items-center gap-2 text-lg">
+                          <Send className="h-5 w-5" />
+                          Transfer Funds from Subaccount
+                        </CardTitle>
+                        <CardDescription>
+                          Transfer your funds from the subaccount to any address
+                        </CardDescription>
+                      </CardHeader>
+                      <CardContent>
+                        <form onSubmit={handleTransferFromSubaccount} className="space-y-4">
+                          <div className="space-y-2">
+                            <Label htmlFor="transferToAddress">To Address</Label>
+                            <Input
+                              id="transferToAddress"
+                              type="text"
+                              placeholder="Enter recipient address"
+                              value={transferToAddress}
+                              onChange={(e) => setTransferToAddress(e.target.value)}
+                              disabled={isTransferring}
+                              required
+                            />
+                          </div>
+                          
+                          <div className="space-y-2">
+                            <Label htmlFor="transferAmount">Amount (APT)</Label>
+                            <Input
+                              id="transferAmount"
+                              type="number"
+                              step="0.00000001"
+                              max={subaccountBalance}
+                              placeholder="Enter amount to transfer"
+                              value={transferAmount}
+                              onChange={(e) => setTransferAmount(e.target.value)}
+                              disabled={isTransferring}
+                              required
+                            />
+                            <p className="text-xs text-muted-foreground">
+                              Available: {subaccountBalance} APT
+                            </p>
+                          </div>
+                          
+                          <Button 
+                            type="submit"
+                            disabled={isTransferring || !transferToAddress || !transferAmount || subaccountBalance === 0}
+                            className="w-full bg-blue-600 hover:bg-blue-700"
+                          >
+                            {isTransferring ? (
+                              <>
+                                <Loader2 className="animate-spin h-4 w-4 mr-2" />
+                                Transferring...
+                              </>
+                            ) : (
+                              <>
+                                <Send className="h-4 w-4 mr-2" />
+                                Send Funds
+                              </>
+                            )}
+                          </Button>
+                        </form>
+                      </CardContent>
+                    </Card>
+
+                    {/* Information Card */}
+                    <div className="p-4 bg-blue-50 border border-blue-200 rounded-lg">
+                      <p className="text-sm text-blue-800">
+                        <strong>Note:</strong> This subaccount is uniquely generated for your wallet address. 
+                        You can use it to manage your deadlock funds and transfer them back to your main wallet or any other address when needed.
+                      </p>
                     </div>
                   </div>
-                  <Badge variant="outline" className="text-green-600">Connected</Badge>
-                </div>
-
-                <div className="flex items-center justify-between p-4 border rounded-lg">
-                  <div className="flex items-center gap-3">
-                    <div className="w-10 h-10 bg-blue-100 rounded-lg flex items-center justify-center">
-                      <span className="text-blue-600 font-bold">Ξ</span>
-                    </div>
-                    <div>
-                      <h3 className="font-medium">Ethereum Wallet</h3>
-                      <p className="text-sm text-muted-foreground">0x...abc789</p>
-                    </div>
-                  </div>
-                  <Badge variant="outline" className="text-green-600">Connected</Badge>
-                </div>
-
-                <Button variant="outline" className="w-full">
-                  Connect New Wallet
-                </Button>
+                )}
               </CardContent>
             </Card>
           </TabsContent>

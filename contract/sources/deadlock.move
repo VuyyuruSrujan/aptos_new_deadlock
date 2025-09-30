@@ -3,6 +3,8 @@ module srujan_addr::deadlock_v2 {
     use std::vector;
     use aptos_framework::coin;
     use aptos_framework::aptos_coin::AptosCoin;
+    use aptos_framework::timestamp;
+    use aptos_framework::account;
     use aptos_std::table;
 
     struct LockedFunds has key {
@@ -46,6 +48,23 @@ module srujan_addr::deadlock_v2 {
 
     struct Beneficiaries has key {
         list: vector<Beneficiary>
+    }
+
+    struct DeadlockConfig has key, drop {
+        address: address,                    // User's address
+        inactivity_period_seconds: u64,      // Inactivity period in seconds (converted from days)
+        last_updated_timestamp: u64,         // Timestamp when configuration was last updated
+    }
+
+    struct UserSubAccount has key {
+        main_account: address,               // The main account that owns this subaccount
+        subaccount_address: address,         // The address of this subaccount
+        funds: coin::Coin<AptosCoin>,       // Funds stored in the subaccount
+        created_timestamp: u64,             // When the subaccount was created
+    }
+
+    struct SubAccountRegistry has key {
+        subaccount_address: address,         // Maps main account to its subaccount address
     }
 
     public entry fun initialize_global_index(deployer: &signer) {
@@ -251,7 +270,7 @@ module srujan_addr::deadlock_v2 {
         }
     }
 
-    /// Get the total percentage this address can inherit (from all unclaimed sources)
+    // Get the total percentage this address can inherit (from all unclaimed sources)
     #[view]
     public fun get_total_inheritable_percentage(addr: address): u64 acquires GlobalIndex {
         let unclaimed = get_unclaimed_inheritances(addr);
@@ -373,6 +392,97 @@ module srujan_addr::deadlock_v2 {
     const EOVER_PERCENTAGE: u64 = 3;
     const EDUPLICATE_BENEFICIARY: u64 = 4;
     const EBENEFICIARY_NOT_FOUND: u64 = 5;
+    const EINVALID_DAYS: u64 = 6;
+    const ESUBACCOUNT_ALREADY_EXISTS: u64 = 7;
+    const ESUBACCOUNT_NOT_FOUND: u64 = 8;
+
+    // Constants for time conversion
+    const SECONDS_PER_DAY: u64 = 86400; // 24 * 60 * 60 = 86400 seconds in a day
+
+    // Create a subaccount for the user (simplified version stored under main account)
+    public entry fun create_subaccount(user: &signer) {
+        let user_addr = signer::address_of(user);
+        
+        // Check if user already has a subaccount
+        assert!(!exists<SubAccountRegistry>(user_addr), ESUBACCOUNT_ALREADY_EXISTS);
+        
+        // Generate subaccount address using the user's address and a seed
+        let subaccount_seed = b"deadlock_subaccount";
+        let subaccount_address = account::create_resource_address(&user_addr, subaccount_seed);
+        
+        // Create the registry entry for this user
+        move_to(user, SubAccountRegistry { 
+            subaccount_address 
+        });
+        
+        // Initialize the subaccount data under the main user account
+        let empty_coins = coin::zero<AptosCoin>();
+        
+        move_to(user, UserSubAccount {
+            main_account: user_addr,
+            subaccount_address,
+            funds: empty_coins,
+            created_timestamp: timestamp::now_seconds(),
+        });
+    }
+
+    // Check if user has a subaccount
+    #[view]
+    public fun has_subaccount(user_addr: address): bool {
+        exists<SubAccountRegistry>(user_addr)
+    }
+
+    // Get subaccount address for a user
+    #[view]
+    public fun get_subaccount_address(user_addr: address): address acquires SubAccountRegistry {
+        assert!(exists<SubAccountRegistry>(user_addr), ESUBACCOUNT_NOT_FOUND);
+        let registry = borrow_global<SubAccountRegistry>(user_addr);
+        registry.subaccount_address
+    }
+
+    // Get subaccount details
+    #[view]
+    public fun get_subaccount_details(user_addr: address): (address, u64, u64) acquires SubAccountRegistry, UserSubAccount {
+        let subaccount_addr = get_subaccount_address(user_addr);
+        
+        assert!(exists<UserSubAccount>(user_addr), ESUBACCOUNT_NOT_FOUND);
+        let subaccount = borrow_global<UserSubAccount>(user_addr);
+        
+        let balance = coin::value(&subaccount.funds);
+        (subaccount_addr, balance, subaccount.created_timestamp)
+    }
+
+    // Deposit funds to subaccount
+    public entry fun deposit_to_subaccount(user: &signer, amount: u64) acquires UserSubAccount {
+        let user_addr = signer::address_of(user);
+        
+        // Withdraw from user's main account
+        let coins = coin::withdraw<AptosCoin>(user, amount);
+        
+        // Add to subaccount stored under main account
+        let subaccount = borrow_global_mut<UserSubAccount>(user_addr);
+        coin::merge(&mut subaccount.funds, coins);
+    }
+
+    // Transfer funds from subaccount back to main account or to another address
+    public entry fun transfer_from_subaccount(
+        user: &signer, 
+        to_address: address, 
+        amount: u64
+    ) acquires UserSubAccount {
+        let user_addr = signer::address_of(user);
+        
+        // Get subaccount and check balance
+        let subaccount = borrow_global_mut<UserSubAccount>(user_addr);
+        let available_balance = coin::value(&subaccount.funds);
+        assert!(available_balance >= amount, EINSUFFICIENT_BALANCE);
+        
+        // Extract funds from subaccount
+        let transfer_coins = coin::extract(&mut subaccount.funds, amount);
+        
+        // Deposit to target address
+        coin::deposit(to_address, transfer_coins);
+    }
 
 public entry fun lock_funds(user: &signer, amount: u64) acquires LockedFunds {
     let addr = signer::address_of(user);
@@ -598,5 +708,112 @@ public entry fun lock_funds(user: &signer, amount: u64) acquires LockedFunds {
                 };
             };
         }
+    }
+
+    // Set deadlock configuration for a user (accepts days, converts to seconds)
+    public entry fun set_deadlock_config(user: &signer, inactivity_days: u64) acquires DeadlockConfig {
+        let user_addr = signer::address_of(user);
+        
+        // Validate input - minimum 1 day
+        assert!(inactivity_days >= 1, EINVALID_DAYS);
+        
+        // Convert days to seconds for more accurate tracking
+        let inactivity_seconds = inactivity_days * SECONDS_PER_DAY;
+        
+        // Get current timestamp from the blockchain
+        let current_time = timestamp::now_seconds();
+        
+        // Store or update the configuration
+        if (exists<DeadlockConfig>(user_addr)) {
+            // Update existing configuration
+            let existing_config = borrow_global_mut<DeadlockConfig>(user_addr);
+            existing_config.inactivity_period_seconds = inactivity_seconds;
+            existing_config.last_updated_timestamp = current_time;
+        } else {
+            // Create new configuration
+            let config = DeadlockConfig {
+                address: user_addr,
+                inactivity_period_seconds: inactivity_seconds,
+                last_updated_timestamp: current_time,
+            };
+            move_to(user, config);
+        };
+    }
+
+    // Set deadlock configuration for a user (accepts seconds directly for decimal precision)
+    public entry fun set_deadlock_config_seconds(user: &signer, inactivity_seconds: u64) acquires DeadlockConfig {
+        let user_addr = signer::address_of(user);
+        
+        // Validate input - minimum 1 second 
+        assert!(inactivity_seconds >= 1, EINVALID_DAYS);
+        
+        // Get current timestamp from the blockchain
+        let current_time = timestamp::now_seconds();
+        
+        // Store or update the configuration
+        if (exists<DeadlockConfig>(user_addr)) {
+            // Update existing configuration
+            let existing_config = borrow_global_mut<DeadlockConfig>(user_addr);
+            existing_config.inactivity_period_seconds = inactivity_seconds;
+            existing_config.last_updated_timestamp = current_time;
+        } else {
+            // Create new configuration
+            let config = DeadlockConfig {
+                address: user_addr,
+                inactivity_period_seconds: inactivity_seconds,
+                last_updated_timestamp: current_time,
+            };
+            move_to(user, config);
+        };
+    }
+
+    // Get deadlock configuration for a user
+    #[view]
+    public fun get_deadlock_config(addr: address): (address, u64, u64) acquires DeadlockConfig {
+        if (exists<DeadlockConfig>(addr)) {
+            let config = borrow_global<DeadlockConfig>(addr);
+            (config.address, config.inactivity_period_seconds, config.last_updated_timestamp)
+        } else {
+            // Return default values if no configuration exists
+            (addr, 0, 0)
+        }
+    }
+
+    // Get deadlock configuration in user-friendly format (days instead of seconds)
+    #[view]
+    public fun get_deadlock_config_in_days(addr: address): (address, u64, u64) acquires DeadlockConfig {
+        let (address, inactivity_seconds, last_updated) = get_deadlock_config(addr);
+        let inactivity_days = if (inactivity_seconds > 0) { 
+            inactivity_seconds / SECONDS_PER_DAY 
+        } else { 
+            0 
+        };
+        (address, inactivity_days, last_updated)
+    }
+
+    // Get deadlock configuration with decimal precision (returns seconds for precise calculation)
+    #[view]
+    public fun get_deadlock_config_precise(addr: address): (address, u64, u64) acquires DeadlockConfig {
+        get_deadlock_config(addr)
+    }
+
+    // Check if a user has deadlock configuration set
+    #[view]
+    public fun has_deadlock_config(addr: address): bool {
+        exists<DeadlockConfig>(addr)
+    }
+
+    // Get only the inactivity period in days for a user
+    #[view]
+    public fun get_inactivity_period_days(addr: address): u64 acquires DeadlockConfig {
+        let (_, inactivity_days, _) = get_deadlock_config_in_days(addr);
+        inactivity_days
+    }
+
+    // Get only the last updated timestamp for a user
+    #[view]
+    public fun get_last_updated_timestamp(addr: address): u64 acquires DeadlockConfig {
+        let (_, _, last_updated) = get_deadlock_config(addr);
+        last_updated
     }
 }
