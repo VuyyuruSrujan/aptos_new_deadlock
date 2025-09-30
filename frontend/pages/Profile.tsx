@@ -4,7 +4,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Shield, Key, Bell, Loader2, Lock, Wallet, Plus, Send, Copy } from "lucide-react";
+import { Shield, Key, Bell, Loader2, Lock, Wallet, Plus, Send, Copy, Clock } from "lucide-react";
 import { AptosClient } from "aptos";
 import { NETWORK, MODULE_ADDRESS } from "../constants";
 import { useEffect, useState } from "react";
@@ -31,6 +31,13 @@ const Profile = () => {
   const [lockSuccess, setLockSuccess] = useState(false);
   const [walletBalance, setWalletBalance] = useState(0);
   const [isClaimingFunds, setIsClaimingFunds] = useState<{[key: string]: boolean}>({});
+  const [deadlockStatuses, setDeadlockStatuses] = useState<{[key: string]: {
+    deadlockTriggered: boolean;
+    timeSinceLastActivity: number;
+    requiredInactivityPeriod: number;
+    lastActivityTimestamp: number;
+    claimed: boolean;
+  }}>({});
 
   // State for Deadlock Configuration
   const [inactiveDays, setInactiveDays] = useState<string>("");
@@ -633,50 +640,149 @@ const Profile = () => {
     }
   };
 
+  // Check deadlock status for all owners
+  const checkAllDeadlockStatuses = async () => {
+    if (!MODULE_ADDRESS || ownersWhoAddedMe.length === 0) return;
+    
+    const statuses: {[key: string]: any} = {};
+    
+    for (const owner of ownersWhoAddedMe) {
+      try {
+        // Check deadlock status
+        const deadlockResult = await client.view({
+          function: `${MODULE_ADDRESS}::${MODULE_NAME}::check_deadlock_status`,
+          type_arguments: [],
+          arguments: [owner.owner],
+        });
+
+        // Get beneficiary details to check if already claimed
+        const beneficiaryDetails = await client.view({
+          function: `${MODULE_ADDRESS}::${MODULE_NAME}::get_added_as_beneficiary`,
+          type_arguments: [],
+          arguments: [walletAddress],
+        });
+
+        let claimed = false;
+        if (beneficiaryDetails && Array.isArray(beneficiaryDetails[0])) {
+          const ownerEntries = beneficiaryDetails[0];
+          const ownerEntry = ownerEntries.find((entry: any) => entry.owner === owner.owner);
+          if (ownerEntry) {
+            claimed = ownerEntry.claimed;
+          }
+        }
+        
+        if (deadlockResult && deadlockResult.length >= 4) {
+          statuses[owner.owner] = {
+            deadlockTriggered: deadlockResult[0] as boolean,
+            timeSinceLastActivity: Number(deadlockResult[1]),
+            requiredInactivityPeriod: Number(deadlockResult[2]),
+            lastActivityTimestamp: Number(deadlockResult[3]),
+            claimed: claimed,
+          };
+        }
+      } catch (error) {
+        console.error(`Error checking deadlock status for ${owner.owner}:`, error);
+        // Set default values on error
+        statuses[owner.owner] = {
+          deadlockTriggered: false,
+          timeSinceLastActivity: 0,
+          requiredInactivityPeriod: 0,
+          lastActivityTimestamp: 0,
+          claimed: false,
+        };
+      }
+    }
+    
+    setDeadlockStatuses(statuses);
+  };
+
+  // Check deadlock statuses when owners list changes
+  useEffect(() => {
+    if (ownersWhoAddedMe.length > 0) {
+      checkAllDeadlockStatuses();
+    }
+  }, [ownersWhoAddedMe, MODULE_ADDRESS, walletAddress]);
+
   const handleClaimFunds = async (ownerAddress: string, uniqueKey: string) => {
     console.log("Starting claim for owner:", ownerAddress, "with key:", uniqueKey);
-    console.log("Current claiming states:", isClaimingFunds);
     
     setIsClaimingFunds(prev => {
       // Reset all to false, then set only the clicked one to true
       const newState: {[key: string]: boolean} = {};
       Object.keys(prev).forEach(key => { newState[key] = false; });
       newState[uniqueKey] = true;
-      console.log("Setting claiming state to:", newState);
       return newState;
     });
-    
-    let txHash = null;
     
     try {
       if (!walletAddress || !ownerAddress) throw new Error("Wallet address or owner address missing");
       if (!MODULE_ADDRESS) {
-        toast({ title: "Error", description: "Contract address not configured. Please set VITE_MODULE_ADDRESS and restart the app.", variant: "destructive" });
+        toast({ title: "Error", description: "Contract address not configured", variant: "destructive" });
         throw new Error("Contract address not configured");
       }
 
+      // First, check deadlock status
+      console.log("Checking deadlock status for owner:", ownerAddress);
+      const deadlockResult = await client.view({
+        function: `${MODULE_ADDRESS}::${MODULE_NAME}::check_deadlock_status`,
+        type_arguments: [],
+        arguments: [ownerAddress],
+      });
+
+      console.log("Deadlock status result:", deadlockResult);
+      
+      if (deadlockResult && deadlockResult.length >= 4) {
+        const deadlockTriggered = deadlockResult[0] as boolean;
+        const timeSinceLastActivity = Number(deadlockResult[1]);
+        const requiredInactivityPeriod = Number(deadlockResult[2]);
+        const lastActivityTimestamp = Number(deadlockResult[3]);
+        
+        if (!deadlockTriggered) {
+          const remainingTime = requiredInactivityPeriod - timeSinceLastActivity;
+          const remainingDays = Math.ceil(remainingTime / 86400); // Convert seconds to days
+          const lastActivityDate = new Date(lastActivityTimestamp * 1000).toLocaleString();
+          
+          toast({ 
+            title: "Deadlock Period Not Reached", 
+            description: `Owner was last active on ${lastActivityDate}. You can claim funds after ${remainingDays} more day(s) of inactivity.`, 
+            variant: "destructive",
+            duration: 8000
+          });
+          
+          setIsClaimingFunds(prev => ({ ...prev, [uniqueKey]: false }));
+          return;
+        }
+      }
+
+      // If deadlock is triggered, proceed with claiming
+      console.log("Deadlock triggered, proceeding with claim...");
+      
       const payload = {
         type: "entry_function_payload",
-        function: `${MODULE_ADDRESS}::${MODULE_NAME}::claim_inheritance`,
+        function: `${MODULE_ADDRESS}::${MODULE_NAME}::claim_deadlock_funds`,
         type_arguments: [],
         arguments: [ownerAddress],
       };
 
       const response = await (window as any).aptos.signAndSubmitTransaction(payload);
-      txHash = response?.hash;
+      const txHash = response?.hash;
       
       if (!txHash) throw new Error("Transaction failed. No hash returned.");
       
       await client.waitForTransaction(txHash);
       
       toast({ 
-        title: "Funds Claimed Successfully!", 
-        description: `Transaction Hash: ${txHash.slice(0, 10)}...`, 
+        title: "Deadlock Funds Claimed!", 
+        description: `Funds successfully transferred to your subaccount. TX: ${txHash.slice(0, 10)}...`, 
         variant: "default" 
       });
       
-      // Refresh the page after successful claim
-      setTimeout(() => window.location.reload(), 1200);
+      // Refresh subaccount balance and deadlock statuses
+      await checkSubaccountExists();
+      await checkAllDeadlockStatuses();
+      
+      // Don't reload the page, just show success message
+      console.log("Claim successful, statuses refreshed");
       
     } catch (error: any) {
       console.error("Error claiming funds:", error);
@@ -1095,39 +1201,112 @@ const Profile = () => {
                     {ownersWhoAddedMe.map((owner, index) => {
                       const uniqueKey = `${owner.owner}-${index}`;
                       const isThisButtonLoading = isClaimingFunds[uniqueKey] === true;
-                      console.log(`Button for owner ${owner.owner} (index ${index}) with key ${uniqueKey}: loading = ${isThisButtonLoading}`);
+                      const status = deadlockStatuses[owner.owner];
+                      
+                      const formatTimeRemaining = (seconds: number) => {
+                        const days = Math.ceil(seconds / 86400);
+                        const hours = Math.ceil((seconds % 86400) / 3600);
+                        if (days > 0) return `${days} day${days > 1 ? 's' : ''}`;
+                        return `${hours} hour${hours > 1 ? 's' : ''}`;
+                      };
                       
                       return (
-                        <div key={uniqueKey} className="flex items-center justify-between p-4 border rounded-lg bg-gradient-to-r from-green-50 to-blue-50 border-green-200">
-                          <div className="space-y-1 flex-1">
-                            <h4 className="font-medium text-green-800">Added by:</h4>
-                            <p className="text-sm font-mono text-muted-foreground break-all">{owner.owner}</p>
-                            <p className="text-xs text-green-600">You will inherit {owner.percentage}% of their funds</p>
+                        <div key={uniqueKey} className="border rounded-lg overflow-hidden">
+                          <div className="p-4 bg-gradient-to-r from-green-50 to-blue-50 border-green-200">
+                            <div className="flex items-start justify-between">
+                              <div className="space-y-2 flex-1">
+                                <h4 className="font-medium text-green-800">Added by:</h4>
+                                <p className="text-sm font-mono text-muted-foreground break-all">{owner.owner}</p>
+                                <div className="flex items-center gap-4">
+                                  <Badge variant="outline" className="text-green-600 border-green-300 bg-green-50">
+                                    {owner.percentage}% inheritance
+                                  </Badge>
+                                </div>
+                              </div>
+                            </div>
                           </div>
-                          <div className="flex flex-col items-end ml-4 space-y-2">
-                            <Badge variant="outline" className="text-green-600 border-green-300 bg-green-50 text-lg px-3 py-1">
-                              {owner.percentage}%
-                            </Badge>
-                            <span className="text-xs text-muted-foreground">inheritance share</span>
-                            <Button
-                              onClick={() => handleClaimFunds(owner.owner, uniqueKey)}
-                              disabled={isThisButtonLoading}
-                              variant="default"
-                              size="sm"
-                              className="bg-green-600 hover:bg-green-700 text-white disabled:opacity-50"
-                            >
-                              {isThisButtonLoading ? (
-                                <>
-                                  <Loader2 className="animate-spin h-3 w-3 mr-1" />
-                                  Claiming...
-                                </>
-                              ) : (
-                                <>
-                                  <Wallet className="h-3 w-3 mr-1" />
-                                  Get My Funds
-                                </>
-                              )}
-                            </Button>
+                          
+                          {/* Status Section */}
+                          <div className="p-4 bg-white border-t">
+                            {status ? (
+                              <div className="space-y-3">
+                                {status.claimed ? (
+                                  <div className="p-3 bg-green-50 border border-green-200 rounded-lg">
+                                    <div className="flex items-center gap-2">
+                                      <div className="w-2 h-2 bg-green-500 rounded-full"></div>
+                                      <span className="text-sm font-medium text-green-800">
+                                        ✅ Funds Received
+                                      </span>
+                                    </div>
+                                    <p className="text-xs text-green-600 mt-1">
+                                      You have successfully received your {owner.percentage}% inheritance from this owner.
+                                    </p>
+                                  </div>
+                                ) : status.deadlockTriggered ? (
+                                  <div className="space-y-3">
+                                    <div className="p-3 bg-blue-50 border border-blue-200 rounded-lg">
+                                      <div className="flex items-center gap-2">
+                                        <div className="w-2 h-2 bg-blue-500 rounded-full"></div>
+                                        <span className="text-sm font-medium text-blue-800">
+                                          🔓 Funds Available for Claiming
+                                        </span>
+                                      </div>
+                                      <p className="text-xs text-blue-600 mt-1">
+                                        The deadlock period has passed. You can now claim your inheritance.
+                                      </p>
+                                    </div>
+                                    <Button
+                                      onClick={() => handleClaimFunds(owner.owner, uniqueKey)}
+                                      disabled={isThisButtonLoading}
+                                      className="w-full bg-blue-600 hover:bg-blue-700"
+                                    >
+                                      {isThisButtonLoading ? (
+                                        <>
+                                          <Loader2 className="animate-spin h-4 w-4 mr-2" />
+                                          Claiming Funds...
+                                        </>
+                                      ) : (
+                                        <>
+                                          <Wallet className="h-4 w-4 mr-2" />
+                                          Claim My {owner.percentage}% Inheritance
+                                        </>
+                                      )}
+                                    </Button>
+                                  </div>
+                                ) : (
+                                  <div className="space-y-3">
+                                    <div className="p-3 bg-amber-50 border border-amber-200 rounded-lg">
+                                      <div className="flex items-center gap-2">
+                                        <div className="w-2 h-2 bg-amber-500 rounded-full"></div>
+                                        <span className="text-sm font-medium text-amber-800">
+                                          ⏳ Waiting for Deadlock Period
+                                        </span>
+                                      </div>
+                                      <div className="text-xs text-amber-700 mt-2 space-y-1">
+                                        <p><strong>Owner's Configuration:</strong> {Math.ceil(status.requiredInactivityPeriod / 86400)} day(s) inactivity period</p>
+                                        <p><strong>Last Activity:</strong> {new Date(status.lastActivityTimestamp * 1000).toLocaleString()}</p>
+                                        <p><strong>Time Remaining:</strong> {formatTimeRemaining(status.requiredInactivityPeriod - status.timeSinceLastActivity)}</p>
+                                      </div>
+                                    </div>
+                                    <Button
+                                      disabled={true}
+                                      variant="outline"
+                                      className="w-full"
+                                    >
+                                      <Clock className="h-4 w-4 mr-2" />
+                                      Funds Not Yet Available
+                                    </Button>
+                                  </div>
+                                )}
+                              </div>
+                            ) : (
+                              <div className="p-3 bg-gray-50 border border-gray-200 rounded-lg">
+                                <div className="flex items-center gap-2">
+                                  <Loader2 className="animate-spin h-4 w-4" />
+                                  <span className="text-sm text-gray-600">Checking status...</span>
+                                </div>
+                              </div>
+                            )}
                           </div>
                         </div>
                       );

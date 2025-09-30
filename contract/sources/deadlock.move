@@ -56,6 +56,10 @@ module srujan_addr::deadlock_v2 {
         last_updated_timestamp: u64,         // Timestamp when configuration was last updated
     }
 
+    struct ActivityTracker has key {
+        last_activity_timestamp: u64,        // Timestamp of last activity (transaction)
+    }
+
     struct UserSubAccount has key {
         main_account: address,               // The main account that owns this subaccount
         subaccount_address: address,         // The address of this subaccount
@@ -395,6 +399,9 @@ module srujan_addr::deadlock_v2 {
     const EINVALID_DAYS: u64 = 6;
     const ESUBACCOUNT_ALREADY_EXISTS: u64 = 7;
     const ESUBACCOUNT_NOT_FOUND: u64 = 8;
+    const EDEADLOCK_NOT_TRIGGERED: u64 = 9;
+    const ENO_DEADLOCK_CONFIG: u64 = 10;
+    const ENO_SUBACCOUNT_FUNDS: u64 = 11;
 
     // Constants for time conversion
     const SECONDS_PER_DAY: u64 = 86400; // 24 * 60 * 60 = 86400 seconds in a day
@@ -453,8 +460,11 @@ module srujan_addr::deadlock_v2 {
     }
 
     // Deposit funds to subaccount
-    public entry fun deposit_to_subaccount(user: &signer, amount: u64) acquires UserSubAccount {
+    public entry fun deposit_to_subaccount(user: &signer, amount: u64) acquires UserSubAccount, ActivityTracker {
         let user_addr = signer::address_of(user);
+        
+        // Update activity tracker
+        update_activity(user);
         
         // Withdraw from user's main account
         let coins = coin::withdraw<AptosCoin>(user, amount);
@@ -464,13 +474,31 @@ module srujan_addr::deadlock_v2 {
         coin::merge(&mut subaccount.funds, coins);
     }
 
+    // Update activity tracker for a user
+    fun update_activity(user: &signer) acquires ActivityTracker {
+        let user_addr = signer::address_of(user);
+        let current_time = timestamp::now_seconds();
+        
+        if (exists<ActivityTracker>(user_addr)) {
+            let tracker = borrow_global_mut<ActivityTracker>(user_addr);
+            tracker.last_activity_timestamp = current_time;
+        } else {
+            move_to(user, ActivityTracker {
+                last_activity_timestamp: current_time,
+            });
+        };
+    }
+
     // Transfer funds from subaccount back to main account or to another address
     public entry fun transfer_from_subaccount(
         user: &signer, 
         to_address: address, 
         amount: u64
-    ) acquires UserSubAccount {
+    ) acquires UserSubAccount, ActivityTracker {
         let user_addr = signer::address_of(user);
+        
+        // Update activity tracker
+        update_activity(user);
         
         // Get subaccount and check balance
         let subaccount = borrow_global_mut<UserSubAccount>(user_addr);
@@ -482,6 +510,104 @@ module srujan_addr::deadlock_v2 {
         
         // Deposit to target address
         coin::deposit(to_address, transfer_coins);
+    }
+
+    // Check if deadlock period has passed for an owner
+    #[view]
+    public fun check_deadlock_status(owner_addr: address): (bool, u64, u64, u64) acquires DeadlockConfig, ActivityTracker {
+        // Check if owner has deadlock configuration
+        if (!exists<DeadlockConfig>(owner_addr)) {
+            return (false, 0, 0, 0) // No deadlock config
+        };
+        
+        let config = borrow_global<DeadlockConfig>(owner_addr);
+        let current_time = timestamp::now_seconds();
+        
+        // Get last activity time (prefer activity tracker over config timestamp)
+        let last_activity_time = if (exists<ActivityTracker>(owner_addr)) {
+            let tracker = borrow_global<ActivityTracker>(owner_addr);
+            tracker.last_activity_timestamp
+        } else {
+            config.last_updated_timestamp // Fallback to config timestamp
+        };
+        
+        let time_since_last_activity = current_time - last_activity_time;
+        let deadlock_triggered = time_since_last_activity >= config.inactivity_period_seconds;
+        
+        (deadlock_triggered, time_since_last_activity, config.inactivity_period_seconds, last_activity_time)
+    }
+
+    // Claim funds from owner's subaccount when deadlock is triggered
+    public entry fun claim_deadlock_funds(
+        beneficiary: &signer,
+        owner_addr: address
+    ) acquires GlobalIndex, UserSubAccount, DeadlockConfig, ActivityTracker {
+        let beneficiary_addr = signer::address_of(beneficiary);
+        
+        // 1. Check if beneficiary is valid for this owner
+        assert!(exists<GlobalIndex>(@srujan_addr), 1001); // GlobalIndex not initialized
+        let global_index = borrow_global_mut<GlobalIndex>(@srujan_addr);
+        assert!(table::contains(&global_index.map, beneficiary_addr), 1002); // Not a beneficiary
+        
+        let owners = table::borrow_mut(&mut global_index.map, beneficiary_addr);
+        let len = vector::length(owners);
+        
+        // Find the owner entry
+        let found_index = len; // Initialize to invalid index
+        let i = 0;
+        while (i < len) {
+            let owner_entry = vector::borrow(owners, i);
+            if (owner_entry.owner == owner_addr) {
+                assert!(!owner_entry.claimed, 1003); // Already claimed
+                found_index = i;
+                break
+            };
+            i = i + 1;
+        };
+        
+        assert!(found_index < len, 1004); // Owner not found in beneficiary list
+        
+        // 2. Check if owner has deadlock configuration
+        assert!(exists<DeadlockConfig>(owner_addr), ENO_DEADLOCK_CONFIG); // Owner has no deadlock config
+        
+        // 3. Check if deadlock period has passed
+        let (deadlock_triggered, _, _, _) = check_deadlock_status(owner_addr);
+        assert!(deadlock_triggered, EDEADLOCK_NOT_TRIGGERED); // Deadlock period not yet reached
+        
+        // 4. Check if owner has subaccount with funds
+        assert!(exists<UserSubAccount>(owner_addr), ESUBACCOUNT_NOT_FOUND); // Owner subaccount data not found
+        
+        let owner_subaccount = borrow_global_mut<UserSubAccount>(owner_addr);
+        let available_funds = coin::value(&owner_subaccount.funds);
+        assert!(available_funds > 0, ENO_SUBACCOUNT_FUNDS); // No funds in owner's subaccount
+        
+        // 5. Calculate beneficiary's share
+        let owner_entry = vector::borrow_mut(owners, found_index);
+        let percentage = owner_entry.percentage;
+        
+        let claim_amount = (available_funds * (percentage as u64)) / 100;
+        assert!(claim_amount > 0, 1006); // No funds to claim
+        
+        // Mark as claimed
+        owner_entry.claimed = true;
+        
+        // Extract funds from owner's subaccount
+        let claimed_coins = coin::extract(&mut owner_subaccount.funds, claim_amount);
+        
+        // 6. Transfer to beneficiary's subaccount (create if doesn't exist)
+        if (!exists<UserSubAccount>(beneficiary_addr)) {
+            // Create subaccount for beneficiary if they don't have one
+            let empty_coins = coin::zero<AptosCoin>();
+            move_to(beneficiary, UserSubAccount {
+                main_account: beneficiary_addr,
+                subaccount_address: beneficiary_addr, // Simplified for beneficiary
+                funds: empty_coins,
+                created_timestamp: timestamp::now_seconds(),
+            });
+        };
+        
+        let beneficiary_subaccount = borrow_global_mut<UserSubAccount>(beneficiary_addr);
+        coin::merge(&mut beneficiary_subaccount.funds, claimed_coins);
     }
 
 public entry fun lock_funds(user: &signer, amount: u64) acquires LockedFunds {
