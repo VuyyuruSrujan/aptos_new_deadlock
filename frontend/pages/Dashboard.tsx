@@ -35,6 +35,7 @@ const Dashboard = () => {
   const client = new AptosClient(NODE_URL);
 
   // Initialize global index if needed (only contract deployer can do this)
+  // @ts-ignore
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const initializeGlobalIndex = async () => {
     try {

@@ -10,6 +10,7 @@
     "move:upgrade": "node ./scripts/move/upgrade && node ./scripts/move/get_abi",
     "dev": "vite",
     "build": "tsc && vite build",
+    "build:gh-pages": "NODE_ENV=production tsc && vite build",
     "deploy": "vercel",
     "lint": "eslint . --ext ts,tsx --report-unused-disable-directives --max-warnings 0",
     "preview": "vite preview",
