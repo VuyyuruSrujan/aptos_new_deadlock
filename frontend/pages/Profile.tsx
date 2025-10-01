@@ -4,7 +4,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Shield, Key, Bell, Loader2, Lock, Wallet, Plus, Send, Copy, Clock } from "lucide-react";
+import { Shield, Bell, Loader2, Wallet, Plus, Send, Copy, Clock } from "lucide-react";
 import { AptosClient } from "aptos";
 import { NETWORK, MODULE_ADDRESS } from "../constants";
 import { useEffect, useState } from "react";
@@ -26,7 +26,6 @@ const Profile = () => {
 
   // State for Lock Funds
   const [lockAmount, setLockAmount] = useState<string>("");
-  const [locked, setLocked] = useState(0);
   const [isLocking, setIsLocking] = useState(false);
   const [lockSuccess, setLockSuccess] = useState(false);
   const [walletBalance, setWalletBalance] = useState(0);
@@ -124,25 +123,25 @@ const Profile = () => {
     checkWallet();
   }, []);
 
-  // Fetch locked funds from blockchain
-  useEffect(() => {
-    const fetchLockedFunds = async () => {
-      if (!walletAddress || !MODULE_ADDRESS) return;
-      try {
-        const result = await client.view({
-          function: `${MODULE_ADDRESS}::${MODULE_NAME}::get_locked_funds`,
-          type_arguments: [],
-          arguments: [walletAddress],
-        });
-        // result[0] is the amount in Octas (1 APT = 10^8 Octas)
-        const lockedApt = result && result[0] ? Number(result[0]) / 1e8 : 0;
-        setLocked(lockedApt);
-      } catch (err) {
-        setLocked(0);
-      }
-    };
-    fetchLockedFunds();
-  }, [walletAddress]);
+  // Fetch locked funds from blockchain - Commented out since locked state is not used
+  // useEffect(() => {
+  //   const fetchLockedFunds = async () => {
+  //     if (!walletAddress || !MODULE_ADDRESS) return;
+  //     try {
+  //       const result = await client.view({
+  //         function: `${MODULE_ADDRESS}::${MODULE_NAME}::get_locked_funds`,
+  //         type_arguments: [],
+  //         arguments: [walletAddress],
+  //       });
+  //       // result[0] is the amount in Octas (1 APT = 10^8 Octas)
+  //       // const lockedApt = result && result[0] ? Number(result[0]) / 1e8 : 0;
+  //       // setLocked(lockedApt); // Commented out since locked state is not used
+  //     } catch (err) {
+  //       // setLocked(0); // Commented out since locked state is not used
+  //     }
+  //   };
+  //   fetchLockedFunds();
+  // }, [walletAddress]);
 
   // Fetch user's Aptos balance
   useEffect(() => {
@@ -203,86 +202,87 @@ const Profile = () => {
     checkSubaccountExists();
   }, [walletAddress]);
 
-  const handleLockFunds = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setIsLocking(true);
-    setLockSuccess(false);
-    let txHash = null;
-    try {
-      const amountNum = Number(lockAmount);
-      if (!walletAddress || !amountNum) throw new Error("Wallet address or amount missing");
-      if (amountNum > walletBalance) {
-        toast({ title: "Insufficient Balance", description: "You do not have enough balance to lock this amount.", variant: "destructive" });
-        setIsLocking(false);
-        return;
-      }
-      
-      // Check if user has completed profile setup (deadlock configuration) from smart contract
-      try {
-        const configResult = await client.view({
-          function: `${MODULE_ADDRESS}::${MODULE_NAME}::has_deadlock_config`,
-          type_arguments: [],
-          arguments: [walletAddress],
-        });
-        
-        const hasConfig = configResult && configResult[0] === true;
-        
-        if (!hasConfig) {
-          toast({ 
-            title: "Profile Setup Required", 
-            description: "Please complete your Profile Setup first to set the inactivity period before locking funds.", 
-            variant: "destructive" 
-          });
-          setIsLocking(false);
-          // Switch to Profile Setup tab
-          const profileSetupTab = document.querySelector('[value="security"]');
-          if (profileSetupTab) {
-            (profileSetupTab as HTMLElement).click();
-          }
-          return;
-        }
-      } catch (configError) {
-        console.error("Error checking deadlock config:", configError);
-        toast({ 
-          title: "Profile Setup Required", 
-          description: "Please complete your Profile Setup first to set the inactivity period before locking funds.", 
-          variant: "destructive" 
-        });
-        setIsLocking(false);
-        // Switch to Profile Setup tab
-        const profileSetupTab = document.querySelector('[value="security"]');
-        if (profileSetupTab) {
-          (profileSetupTab as HTMLElement).click();
-        }
-        return;
-      }
-      if (!MODULE_ADDRESS) {
-        toast({ title: "Error", description: "Contract address not configured. Please set VITE_MODULE_ADDRESS and restart the app.", variant: "destructive" });
-        setIsLocking(false);
-        return;
-      }
-      // Convert APT to Octas (1 APT = 10^8 Octas)
-      const amountInOctas = (amountNum * 100000000).toString();
-      const payload = {
-        type: "entry_function_payload",
-        function: `${MODULE_ADDRESS}::${MODULE_NAME}::lock_funds`,
-        type_arguments: [],
-        arguments: [amountInOctas],
-      };
-      const response = await (window as any).aptos.signAndSubmitTransaction(payload);
-      txHash = response?.hash;
-      if (!txHash) throw new Error("Transaction failed. No hash returned.");
-      await client.waitForTransaction(txHash);
-      toast({ title: "Funds Locked!", description: `Transaction Hash: ${txHash.slice(0, 10)}...`, variant: "default" });
-      setIsLocking(false);
-      setLockSuccess(true);
-      setTimeout(() => window.location.reload(), 1200);
-    } catch (error: any) {
-      setIsLocking(false);
-      setLockSuccess(false);
-      toast({ title: "Error", description: error?.message || "Failed to lock funds", variant: "destructive" });
-    }
-  };
+  // This function is commented out as it's not currently used
+  // const handleLockFunds = async (e: React.FormEvent) => {
+  //   e.preventDefault();
+  //   setIsLocking(true);
+  //   setLockSuccess(false);
+  //   let txHash = null;
+  //   try {
+  //     const amountNum = Number(lockAmount);
+  //     if (!walletAddress || !amountNum) throw new Error("Wallet address or amount missing");
+  //     if (amountNum > walletBalance) {
+  //       toast({ title: "Insufficient Balance", description: "You do not have enough balance to lock this amount.", variant: "destructive" });
+  //       setIsLocking(false);
+  //       return;
+  //     }
+  //     
+  //     // Check if user has completed profile setup (deadlock configuration) from smart contract
+  //     try {
+  //       const configResult = await client.view({
+  //         function: `${MODULE_ADDRESS}::${MODULE_NAME}::has_deadlock_config`,
+  //         type_arguments: [],
+  //         arguments: [walletAddress],
+  //       });
+  //       
+  //       const hasConfig = configResult && configResult[0] === true;
+  //       
+  //       if (!hasConfig) {
+  //         toast({ 
+  //           title: "Profile Setup Required", 
+  //           description: "Please complete your Profile Setup first to set the inactivity period before locking funds.", 
+  //           variant: "destructive" 
+  //         });
+  //         setIsLocking(false);
+  //         // Switch to Profile Setup tab
+  //         const profileSetupTab = document.querySelector('[value="security"]');
+  //         if (profileSetupTab) {
+  //           (profileSetupTab as HTMLElement).click();
+  //         }
+  //         return;
+  //       }
+  //     } catch (configError) {
+  //       console.error("Error checking deadlock config:", configError);
+  //       toast({ 
+  //         title: "Profile Setup Required", 
+  //         description: "Please complete your Profile Setup first to set the inactivity period before locking funds.", 
+  //         variant: "destructive" 
+  //       });
+  //       setIsLocking(false);
+  //       // Switch to Profile Setup tab
+  //       const profileSetupTab = document.querySelector('[value="security"]');
+  //       if (profileSetupTab) {
+  //         (profileSetupTab as HTMLElement).click();
+  //       }
+  //       return;
+  //     }
+  //     if (!MODULE_ADDRESS) {
+  //       toast({ title: "Error", description: "Contract address not configured. Please set VITE_MODULE_ADDRESS and restart the app.", variant: "destructive" });
+  //       setIsLocking(false);
+  //       return;
+  //     }
+  //     // Convert APT to Octas (1 APT = 10^8 Octas)
+  //     const amountInOctas = (amountNum * 100000000).toString();
+  //     const payload = {
+  //       type: "entry_function_payload",
+  //       function: `${MODULE_ADDRESS}::${MODULE_NAME}::lock_funds`,
+  //       type_arguments: [],
+  //       arguments: [amountInOctas],
+  //     };
+  //     const response = await (window as any).aptos.signAndSubmitTransaction(payload);
+  //     txHash = response?.hash;
+  //     if (!txHash) throw new Error("Transaction failed. No hash returned.");
+  //     await client.waitForTransaction(txHash);
+  //     toast({ title: "Funds Locked!", description: `Transaction Hash: ${txHash.slice(0, 10)}...`, variant: "default" });
+  //     setIsLocking(false);
+  //     setLockSuccess(true);
+  //     setTimeout(() => window.location.reload(), 1200);
+  //   } catch (error: any) {
+  //     setIsLocking(false);
+  //     setLockSuccess(false);
+  //     toast({ title: "Error", description: error?.message || "Failed to lock funds", variant: "destructive" });
+  //   }
+  // };
 
   const handleDepositToSubaccount = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -521,12 +521,13 @@ const Profile = () => {
     }
   };
 
-  const formatAddress = (address: string) => {
-    if (!address) return "";
-    return address.length > 20 
-      ? `${address.slice(0, 10)}...${address.slice(-6)}`
-      : address;
-  };
+  // This function is commented out as it's not currently used
+  // const formatAddress = (address: string) => {
+  //   if (!address) return "";
+  //   return address.length > 20 
+  //     ? `${address.slice(0, 10)}...${address.slice(-6)}`
+  //     : address;
+  // };
 
   const handleCreateSubaccount = async () => {
     if (!walletAddress) {

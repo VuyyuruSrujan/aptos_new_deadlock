@@ -35,32 +35,32 @@ const Dashboard = () => {
   const client = new AptosClient(NODE_URL);
 
   // Initialize global index if needed (only contract deployer can do this)
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  const initializeGlobalIndex = async () => {
-    try {
-      if (!(window as any).aptos) throw new Error("Wallet not connected");
-      if (!MODULE_ADDRESS) throw new Error("Contract address not configured");
-
-      const payload = {
-        type: "entry_function_payload",
-        function: `${MODULE_ADDRESS}::${MODULE_NAME}::initialize_global_index`,
-        type_arguments: [],
-        arguments: [],
-      };
-      
-      const response = await (window as any).aptos.signAndSubmitTransaction(payload);
-      if (!response?.hash) throw new Error("Transaction failed");
-      await client.waitForTransaction(response.hash);
-      
-      toast({ 
-        title: "Global Index Initialized", 
-        description: `Transaction Hash: ${response.hash.slice(0, 10)}...` 
-      });
-    } catch (err: any) {
-      // It's okay if this fails - it might already be initialized or user might not be the deployer
-      console.log("Global index initialization:", err?.message);
-    }
-  };
+  // This function is commented out as it's not currently used
+  // const initializeGlobalIndex = async () => {
+  //   try {
+  //     if (!(window as any).aptos) throw new Error("Wallet not connected");
+  //     if (!MODULE_ADDRESS) throw new Error("Contract address not configured");
+  // 
+  //     const payload = {
+  //       type: "entry_function_payload",
+  //       function: `${MODULE_ADDRESS}::${MODULE_NAME}::initialize_global_index`,
+  //       type_arguments: [],
+  //       arguments: [],
+  //     };
+  //     
+  //     const response = await (window as any).aptos.signAndSubmitTransaction(payload);
+  //     if (!response?.hash) throw new Error("Transaction failed");
+  //     await client.waitForTransaction(response.hash);
+  //     
+  //     toast({ 
+  //       title: "Global Index Initialized", 
+  //       description: `Transaction Hash: ${response.hash.slice(0, 10)}...` 
+  //     });
+  //   } catch (err: any) {
+  //     // It's okay if this fails - it might already be initialized or user might not be the deployer
+  //     console.log("Global index initialization:", err?.message);
+  //   }
+  // };
 
   // Get wallet address from localStorage (set by Navigation)
   useEffect(() => {
