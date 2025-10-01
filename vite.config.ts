@@ -23,5 +23,5 @@ export default defineConfig({
   optimizeDeps: {
     include: ['buffer', 'process', 'stream-browserify', 'util'],
   },
-  base: "./",
+  base: process.env.GITHUB_PAGES === 'true' ? '/aptos_new_deadlock/' : './',
 });
