@@ -6,7 +6,6 @@ export default defineConfig({
   build: {
     outDir: "dist",
   },
-  publicDir: "public",
   server: {
     open: true,
   },
@@ -24,5 +23,5 @@ export default defineConfig({
   optimizeDeps: {
     include: ['buffer', 'process', 'stream-browserify', 'util'],
   },
-  base: process.env.NODE_ENV === 'production' ? '/aptos_new_deadlock/' : './',
+  base: "./",
 });

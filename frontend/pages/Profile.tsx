@@ -4,7 +4,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Shield, Bell, Loader2, Wallet, Plus, Send, Copy, Clock } from "lucide-react";
+import { Shield, Key, Bell, Loader2, Lock, Wallet, Plus, Send, Copy, Clock } from "lucide-react";
 import { AptosClient } from "aptos";
 import { NETWORK, MODULE_ADDRESS } from "../constants";
 import { useEffect, useState } from "react";
@@ -26,8 +26,6 @@ const Profile = () => {
 
   // State for Lock Funds
   const [lockAmount, setLockAmount] = useState<string>("");
-  // @ts-ignore
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const [locked, setLocked] = useState(0);
   const [isLocking, setIsLocking] = useState(false);
   const [lockSuccess, setLockSuccess] = useState(false);
@@ -205,8 +203,6 @@ const Profile = () => {
     checkSubaccountExists();
   }, [walletAddress]);
 
-  // @ts-ignore
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const handleLockFunds = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsLocking(true);
@@ -525,8 +521,6 @@ const Profile = () => {
     }
   };
 
-  // @ts-ignore
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const formatAddress = (address: string) => {
     if (!address) return "";
     return address.length > 20 

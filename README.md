@@ -2,8 +2,6 @@
 
 The Boilerplate template provides a starter dapp with all necessary dapp infrastructure and a simple wallet info implementation, transfer APT and a simple message board functionality to send and read a message on chain.
 
-**🚀 This app is deployed on GitHub Pages!**
-
 ## Read the Boilerplate template docs
 
 To get started with the Boilerplate template and learn more about the template functionality and usage, head over to the [Boilerplate template docs](https://learn.aptoslabs.com/en/dapp-templates/boilerplate-template)
