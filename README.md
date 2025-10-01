@@ -38,3 +38,35 @@ Some commands are built-in the template and can be ran as a npm script, for exam
 - `npm run deploy` - a command to deploy the dapp to Vercel
 
 For all other available CLI commands, can run `npx aptos` and see a list of all available commands.
+
+## Deploying to GitHub Pages
+
+This repository is configured to automatically deploy to GitHub Pages when you push to the `master` branch.
+
+### Setup Instructions
+
+1. **Enable GitHub Pages in your repository settings**:
+   - Go to your repository on GitHub
+   - Navigate to `Settings` > `Pages`
+   - Under "Build and deployment", select:
+     - **Source**: Deploy from a branch
+     - **Branch**: `gh-pages` / `(root)`
+   - Click Save
+
+2. **Push to the master branch**:
+   - Any push to the `master` branch will trigger the GitHub Actions workflow
+   - The workflow will build the project and deploy it to the `gh-pages` branch
+   - Your site will be available at: `https://<username>.github.io/aptos_new_deadlock/`
+
+3. **Manual deployment**:
+   - You can also trigger deployment manually from the Actions tab
+   - Go to `Actions` > `Deploy to GitHub Pages` > `Run workflow`
+
+### How it works
+
+- The GitHub Actions workflow (`.github/workflows/main.yml`) automatically:
+  1. Installs dependencies
+  2. Builds the project with the correct base path
+  3. Deploys the `dist` folder to the `gh-pages` branch
+- The app uses React Router's `HashRouter` for client-side routing, which works perfectly with GitHub Pages
+- Assets are served with the correct path using Vite's base configuration
