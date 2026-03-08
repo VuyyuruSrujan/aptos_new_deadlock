@@ -9,6 +9,7 @@ import { AptosClient } from "aptos";
 import { NETWORK, MODULE_ADDRESS } from "../constants";
 import { useEffect, useState } from "react";
 import { toast } from "@/components/ui/use-toast";
+import { useWallet } from "@aptos-labs/wallet-adapter-react";
 
 const NODE_URL = `https://fullnode.${NETWORK}.aptoslabs.com/v1`;
 const MODULE_NAME = "deadlock_v2";
@@ -21,7 +22,8 @@ interface Owner {
 }
 
 const Profile = () => {
-  const [walletAddress, setWalletAddress] = useState("");
+  const { account, signAndSubmitTransaction } = useWallet();
+  const walletAddress = account?.address?.toString() ?? "";
   const [ownersWhoAddedMe, setOwnersWhoAddedMe] = useState<Owner[]>([]);
 
   // State for Lock Funds
@@ -54,14 +56,18 @@ const Profile = () => {
   const [transferToAddress, setTransferToAddress] = useState("");
   const [isTransferring, setIsTransferring] = useState(false);
 
-    // Get wallet address from localStorage
-  useEffect(() => {
-    const storedAddress = localStorage.getItem("walletAddress");
-    if (storedAddress) {
-      setWalletAddress(storedAddress);
-      checkSubaccountExists(storedAddress);
-    }
-  }, []);
+  const submitEntryFunctionTransaction = async (
+    functionName: `${string}::${string}::${string}`,
+    functionArguments: (string | number | boolean)[],
+  ) => {
+    return signAndSubmitTransaction({
+      data: {
+        function: functionName,
+        typeArguments: [],
+        functionArguments,
+      },
+    });
+  };
 
   // Fetch who added me as beneficiary
   useEffect(() => {
@@ -102,27 +108,6 @@ const Profile = () => {
 
     fetchBeneficiaryData();
   }, [walletAddress, MODULE_ADDRESS]);
-
-
-
-  // Check wallet connection
-  useEffect(() => {
-    const checkWallet = async () => {
-      const wallet = (window as any).aptos;
-      if (wallet) {
-        try {
-          const response = await wallet.account();
-          console.log("Connected wallet account:", response);
-        } catch (error) {
-          console.error("Error getting wallet account:", error);
-        }
-      } else {
-        console.log("Petra wallet not found");
-      }
-    };
-    checkWallet();
-  }, []);
-
   // Fetch locked funds from blockchain - Commented out since locked state is not used
   // useEffect(() => {
   //   const fetchLockedFunds = async () => {
@@ -326,14 +311,10 @@ const Profile = () => {
       // Convert APT to Octas (1 APT = 10^8 Octas)
       const amountInOctas = (amountNum * 100000000).toString();
       
-      const payload = {
-        type: "entry_function_payload",
-        function: `${MODULE_ADDRESS}::${MODULE_NAME}::deposit_to_subaccount`,
-        type_arguments: [],
-        arguments: [amountInOctas],
-      };
-
-      const response = await (window as any).aptos.signAndSubmitTransaction(payload);
+      const response = await submitEntryFunctionTransaction(
+        `${MODULE_ADDRESS}::${MODULE_NAME}::deposit_to_subaccount`,
+        [amountInOctas],
+      );
       const txHash = response?.hash;
       
       if (!txHash) throw new Error("Transaction failed. No hash returned.");
@@ -390,14 +371,10 @@ const Profile = () => {
       // Convert decimal days to seconds for precise storage
       const totalSeconds = Math.round(daysValue * 86400); // 86400 seconds per day, round to nearest second
       
-      const payload = {
-        type: "entry_function_payload",
-        function: `${MODULE_ADDRESS}::${MODULE_NAME}::set_deadlock_config_seconds`,
-        type_arguments: [],
-        arguments: [totalSeconds.toString()],
-      };
-
-      const response = await (window as any).aptos.signAndSubmitTransaction(payload);
+      const response = await submitEntryFunctionTransaction(
+        `${MODULE_ADDRESS}::${MODULE_NAME}::set_deadlock_config_seconds`,
+        [totalSeconds.toString()],
+      );
       txHash = response?.hash;
       
       if (!txHash) throw new Error("Transaction failed. No hash returned.");
@@ -543,14 +520,10 @@ const Profile = () => {
     setIsCreatingSubaccount(true);
     
     try {
-      const payload = {
-        type: "entry_function_payload",
-        function: `${MODULE_ADDRESS}::${MODULE_NAME}::create_subaccount`,
-        type_arguments: [],
-        arguments: [],
-      };
-
-      const response = await (window as any).aptos.signAndSubmitTransaction(payload);
+      const response = await submitEntryFunctionTransaction(
+        `${MODULE_ADDRESS}::${MODULE_NAME}::create_subaccount`,
+        [],
+      );
       const txHash = response?.hash;
       
       if (!txHash) throw new Error("Transaction failed. No hash returned.");
@@ -604,14 +577,10 @@ const Profile = () => {
       // Convert APT to Octas (1 APT = 10^8 Octas)
       const amountInOctas = (amount * 100000000).toString();
       
-      const payload = {
-        type: "entry_function_payload",
-        function: `${MODULE_ADDRESS}::${MODULE_NAME}::transfer_from_subaccount`,
-        type_arguments: [],
-        arguments: [transferToAddress, amountInOctas],
-      };
-
-      const response = await (window as any).aptos.signAndSubmitTransaction(payload);
+      const response = await submitEntryFunctionTransaction(
+        `${MODULE_ADDRESS}::${MODULE_NAME}::transfer_from_subaccount`,
+        [transferToAddress, amountInOctas],
+      );
       const txHash = response?.hash;
       
       if (!txHash) throw new Error("Transaction failed. No hash returned.");
@@ -758,14 +727,10 @@ const Profile = () => {
       // If deadlock is triggered, proceed with claiming
       console.log("Deadlock triggered, proceeding with claim...");
       
-      const payload = {
-        type: "entry_function_payload",
-        function: `${MODULE_ADDRESS}::${MODULE_NAME}::claim_deadlock_funds`,
-        type_arguments: [],
-        arguments: [ownerAddress],
-      };
-
-      const response = await (window as any).aptos.signAndSubmitTransaction(payload);
+      const response = await submitEntryFunctionTransaction(
+        `${MODULE_ADDRESS}::${MODULE_NAME}::claim_deadlock_funds`,
+        [ownerAddress],
+      );
       const txHash = response?.hash;
       
       if (!txHash) throw new Error("Transaction failed. No hash returned.");

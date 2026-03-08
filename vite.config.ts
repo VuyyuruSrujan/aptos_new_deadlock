@@ -7,6 +7,8 @@ export default defineConfig({
     outDir: "dist",
   },
   server: {
+    host: true,
+    port: 5173,
     open: true,
   },
   plugins: [

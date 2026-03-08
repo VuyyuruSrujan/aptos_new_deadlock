@@ -7,6 +7,7 @@ import { NETWORK, MODULE_ADDRESS } from "../constants";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Plus, Edit2 } from "lucide-react";
+import { useWallet } from "@aptos-labs/wallet-adapter-react";
 
 type Beneficiary = {
   addr: string;
@@ -14,6 +15,7 @@ type Beneficiary = {
 };
 
 const Dashboard = () => {
+  const { account, signAndSubmitTransaction } = useWallet();
   const [beneficiaries, setBeneficiaries] = useState<Beneficiary[]>([]);
   const [loadingBeneficiaries, setLoadingBeneficiaries] = useState(false);
   const [showForm, setShowForm] = useState(false);
@@ -29,10 +31,30 @@ const Dashboard = () => {
     balance: 0,
     locked: 0,
   });
+  // Subaccount details
+  const [subaccount, setSubaccount] = useState({
+    address: '',
+    balance: 0,
+    createdAt: 0,
+    exists: false,
+  });
 
   const NODE_URL = `https://fullnode.${NETWORK}.aptoslabs.com/v1`;
   const MODULE_NAME = "deadlock_v2";
   const client = new AptosClient(NODE_URL);
+
+  const submitEntryFunctionTransaction = async (
+    functionName: `${string}::${string}::${string}`,
+    functionArguments: (string | number | boolean)[],
+  ) => {
+    return signAndSubmitTransaction({
+      data: {
+        function: functionName,
+        typeArguments: [],
+        functionArguments,
+      },
+    });
+  };
 
   // Initialize global index if needed (only contract deployer can do this)
   // This function is commented out as it's not currently used
@@ -62,11 +84,11 @@ const Dashboard = () => {
   //   }
   // };
 
-  // Get wallet address from localStorage (set by Navigation)
+  // Keep wallet address in sync with wallet adapter account
   useEffect(() => {
-    const addr = localStorage.getItem('walletAddress') || '';
+    const addr = account?.address?.toString() || "";
     setWallet((w) => ({ ...w, address: addr }));
-  }, []);
+  }, [account]);
 
   // Fetch locked funds and balance from blockchain
   useEffect(() => {
@@ -94,8 +116,31 @@ const Dashboard = () => {
           balance: balanceApt,
           available: balanceApt, // available is now always the current balance
         }));
+        // Subaccount existence and details
+        const subResult = await client.view({
+          function: `${MODULE_ADDRESS}::${MODULE_NAME}::has_subaccount`,
+          type_arguments: [],
+          arguments: [wallet.address],
+        });
+        if (subResult && subResult[0] === true) {
+          // Fetch subaccount details
+          const details = await client.view({
+            function: `${MODULE_ADDRESS}::${MODULE_NAME}::get_subaccount_details`,
+            type_arguments: [],
+            arguments: [wallet.address],
+          });
+          setSubaccount({
+            address: typeof details[0] === 'string' ? details[0] : (details[0]?.toString?.() || ''),
+            balance: details[1] ? Number(details[1]) / 1e8 : 0,
+            createdAt: details[2] ? Number(details[2]) : 0,
+            exists: true,
+          });
+        } else {
+          setSubaccount({ address: '', balance: 0, createdAt: 0, exists: false });
+        }
       } catch (err) {
         setWallet((w) => ({ ...w, totalLocked: 0, locked: 0, balance: 0, available: 0 }));
+        setSubaccount({ address: '', balance: 0, createdAt: 0, exists: false });
       }
     };
     fetchWalletData();
@@ -125,7 +170,7 @@ const Dashboard = () => {
   }, [wallet.address]);
 
   const handleOpenForm = async (index: number | null = null) => {
-    // Check if user has locked funds before adding beneficiaries
+    // Check if user has subaccount minimum balance before adding beneficiaries
     if (index === null) { // Only check for new beneficiaries, not when editing existing ones
       try {
         if (!wallet.address || !MODULE_ADDRESS) {
@@ -136,29 +181,39 @@ const Dashboard = () => {
           });
           return;
         }
-
-        // Get locked funds from smart contract
-        const lockedResult = await client.view({
-          function: `${MODULE_ADDRESS}::${MODULE_NAME}::get_locked_funds`,
+        // Check subaccount existence and minimum balance (e.g., 0.01 APT)
+        const subResult = await client.view({
+          function: `${MODULE_ADDRESS}::${MODULE_NAME}::has_subaccount`,
           type_arguments: [],
           arguments: [wallet.address],
         });
-        
-        const lockedApt = lockedResult && lockedResult[0] ? Number(lockedResult[0]) / 1e8 : 0;
-        
-        if (lockedApt < 0.1) {
-          toast({ 
-            title: "Insufficient Locked Funds", 
-            description: "You must lock at least 0.1 APT before adding beneficiaries. Please go to Profile → Lock Funds first.", 
-            variant: "destructive" 
+        if (!subResult || subResult[0] !== true) {
+          toast({
+            title: "Subaccount Required",
+            description: "Please create a subaccount before adding beneficiaries.",
+            variant: "destructive"
+          });
+          return;
+        }
+        const details = await client.view({
+          function: `${MODULE_ADDRESS}::${MODULE_NAME}::get_subaccount_details`,
+          type_arguments: [],
+          arguments: [wallet.address],
+        });
+        const subBalance = details[1] ? Number(details[1]) / 1e8 : 0;
+        if (subBalance < 0.01) {
+          toast({
+            title: "Insufficient Subaccount Balance",
+            description: "Your subaccount must have at least 0.01 APT to add beneficiaries.",
+            variant: "destructive"
           });
           return;
         }
       } catch (error) {
-        console.error("Error checking locked funds:", error);
+        console.error("Error checking subaccount:", error);
         toast({ 
           title: "Error", 
-          description: "Unable to verify locked funds. Please try again.", 
+          description: "Unable to verify subaccount. Please try again.", 
           variant: "destructive" 
         });
         return;
@@ -220,11 +275,14 @@ const Dashboard = () => {
     e.preventDefault();
     if (!form.address || !form.percentage) return;
     try {
-      if (!(window as any).aptos) throw new Error("Wallet not connected");
+      if (!wallet.address) throw new Error("Wallet not connected");
       if (!MODULE_ADDRESS) throw new Error("Contract address not configured");
 
-      let payload;
-      let toastMsg;
+      let payload: {
+        function: `${string}::${string}::${string}`;
+        arguments: (string | number | boolean)[];
+      };
+      let toastMsg = "";
       
       if (editIndex !== null) {
         // Update existing beneficiary
@@ -250,9 +308,7 @@ const Dashboard = () => {
         }
 
         payload = {
-          type: "entry_function_payload",
           function: `${MODULE_ADDRESS}::${MODULE_NAME}::update_beneficiary`,
-          type_arguments: [],
           arguments: [form.address, Number(form.percentage)],
         };
         toastMsg = "Beneficiary Updated!";
@@ -280,15 +336,13 @@ const Dashboard = () => {
         }
 
         payload = {
-          type: "entry_function_payload",
           function: `${MODULE_ADDRESS}::${MODULE_NAME}::add_beneficiary`,
-          type_arguments: [],
           arguments: [form.address, Number(form.percentage)],
         };
         toastMsg = "Beneficiary Added!";
       }
       
-      const response = await (window as any).aptos.signAndSubmitTransaction(payload);
+      const response = await submitEntryFunctionTransaction(payload.function, payload.arguments);
       if (!response?.hash) throw new Error("Transaction failed");
       await client.waitForTransaction(response.hash);
       
@@ -338,6 +392,17 @@ const Dashboard = () => {
               <div>
                 <div className="font-semibold text-primary">Address:</div>
                 <div className="break-all text-sm">{wallet.address || 'Not connected'}</div>
+                <div className="mt-2 text-xs text-muted-foreground">Subaccount Address:</div>
+                <div className="break-all text-xs font-mono text-blue-600">{subaccount.exists ? subaccount.address : 'No subaccount'}</div>
+                {subaccount.exists && (
+                  <>
+                    <div className="mt-2 text-xs text-muted-foreground">Subaccount Balance:</div>
+                    <div className="font-bold text-blue-600">{subaccount.balance} APT</div>
+                    {subaccount.createdAt > 0 && (
+                      <div className="text-xs text-muted-foreground">Created on: {new Date(subaccount.createdAt * 1000).toLocaleString()}</div>
+                    )}
+                  </>
+                )}
               </div>
               <div className="grid grid-cols-2 gap-4 md:gap-8 mt-4 md:mt-0">
                 <div>
@@ -345,8 +410,8 @@ const Dashboard = () => {
                   <div className="font-bold">{wallet.balance} APT</div>
                 </div>
                 <div>
-                  <div className="text-xs text-muted-foreground">Funds Locked Till Now</div>
-                  <div className="font-bold text-green-600">{wallet.locked} APT</div>
+                  <div className="text-xs text-muted-foreground">Subaccount Balance</div>
+                  <div className="font-bold text-blue-600">{subaccount.balance} APT</div>
                 </div>
                 <div>
                   <div className="text-xs text-muted-foreground">Assigned (%)</div>

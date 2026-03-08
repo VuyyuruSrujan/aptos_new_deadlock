@@ -19,40 +19,34 @@ async function publish() {
 
   const move = new cli.Move();
 
-  move
-    .createObjectAndPublishPackage({
-      packageDirectoryPath: "contract",
-      addressName: "message_board_addr",
-      namedAddresses: {
-        // Publish module to new object, but since we create the object on the fly, we fill in the publisher's account address here
-        message_board_addr: process.env.VITE_MODULE_PUBLISHER_ACCOUNT_ADDRESS,
-      },
-      extraArguments: [`--private-key=${process.env.VITE_MODULE_PUBLISHER_ACCOUNT_PRIVATE_KEY}`,`--url=${aptosSDK.NetworkToNodeAPI[process.env.VITE_APP_NETWORK]}`],
-    })
-    .then((response) => {
-      const filePath = ".env";
-      let envContent = "";
+  await move.publish({
+    packageDirectoryPath: "contract",
+    namedAddresses: {
+      srujan_addr: process.env.VITE_MODULE_PUBLISHER_ACCOUNT_ADDRESS,
+    },
+    extraArguments: [
+      `--private-key=${process.env.VITE_MODULE_PUBLISHER_ACCOUNT_PRIVATE_KEY}`,
+      `--url=${aptosSDK.NetworkToNodeAPI[process.env.VITE_APP_NETWORK]}`,
+      "--assume-yes",
+    ],
+  });
 
-      // Check .env file exists and read it
-      if (fs.existsSync(filePath)) {
-        envContent = fs.readFileSync(filePath, "utf8");
-      }
+  const filePath = ".env";
+  let envContent = "";
 
-      // Regular expression to match the VITE_MODULE_ADDRESS variable
-      const regex = /^VITE_MODULE_ADDRESS=.*$/m;
-      const newEntry = `VITE_MODULE_ADDRESS=${response.objectAddress}`;
+  if (fs.existsSync(filePath)) {
+    envContent = fs.readFileSync(filePath, "utf8");
+  }
 
-      // Check if VITE_MODULE_ADDRESS is already defined
-      if (envContent.match(regex)) {
-        // If the variable exists, replace it with the new value
-        envContent = envContent.replace(regex, newEntry);
-      } else {
-        // If the variable does not exist, append it
-        envContent += `\n${newEntry}`;
-      }
+  const regex = /^VITE_MODULE_ADDRESS=.*$/m;
+  const newEntry = `VITE_MODULE_ADDRESS=${process.env.VITE_MODULE_PUBLISHER_ACCOUNT_ADDRESS}`;
 
-      // Write the updated content back to the .env file
-      fs.writeFileSync(filePath, envContent, "utf8");
-    });
+  if (envContent.match(regex)) {
+    envContent = envContent.replace(regex, newEntry);
+  } else {
+    envContent += `\n${newEntry}`;
+  }
+
+  fs.writeFileSync(filePath, envContent, "utf8");
 }
 publish();

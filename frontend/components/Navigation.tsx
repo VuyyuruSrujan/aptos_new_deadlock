@@ -16,6 +16,7 @@ import {
   Check,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { useWallet } from "@aptos-labs/wallet-adapter-react";
 
 type Theme = "dark" | "light" | "system";
 
@@ -103,9 +104,11 @@ const ThemeToggle = () => {
 
 const Navigation = () => {
   const [isOpen, setIsOpen] = useState(false);
-  const [walletAddress, setWalletAddress] = useState<string | null>(null);
   const [dropdownOpen, setDropdownOpen] = useState(false);
   const [copied, setCopied] = useState(false);
+  const { connect, disconnect: disconnectWallet, account, wallets } = useWallet();
+
+  const walletAddress = account?.address?.toString() ?? null;
 
   const dropdownRef = useRef<HTMLDivElement>(null);
 
@@ -119,17 +122,15 @@ const Navigation = () => {
   // ✅ Connect using Aptos Wallet Standard only
   async function connectfun() {
     try {
-      if (!window.aptos) {
-        console.error("Aptos wallet not found");
+      if (!wallets.length) {
+        console.error("No Aptos wallet detected");
         return;
       }
-      
-      const alreadyConnected = await window.aptos.isConnected();
-      if (!alreadyConnected) {
-        await window.aptos.connect();
-      }
-      const accountResponse = await window.aptos.account();
-      setWalletAddress(accountResponse.address);
+
+      const preferredWallet =
+        wallets.find((wallet) => wallet.name.toLowerCase().includes("petra")) ?? wallets[0];
+
+      connect(preferredWallet.name);
     } catch (error) {
       console.error("Error connecting wallet:", error);
     }
@@ -137,13 +138,9 @@ const Navigation = () => {
 
   async function disconnect() {
     try {
-      if (window.aptos?.disconnect && typeof window.aptos.disconnect === 'function') {
-        await window.aptos.disconnect();
-      }
+      disconnectWallet();
     } catch (error) {
       console.error("Error disconnecting wallet:", error);
-    } finally {
-      setWalletAddress("");
     }
   }
 
@@ -172,35 +169,6 @@ const Navigation = () => {
     document.addEventListener("mousedown", handleClickOutside);
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, []);
-
-  // Restore wallet if already connected
-  useEffect(() => {
-    const saved = localStorage.getItem("walletAddress");
-    if (saved) setWalletAddress(saved);
-
-    // Listen for account change / disconnect events from Aptos wallet
-    if (window.aptos) {
-      window.aptos.onAccountChange?.((account: AptosAccount | null) => {
-        setWalletAddress(account?.address || null);
-        if (account?.address) {
-          localStorage.setItem("walletAddress", account.address);
-        } else {
-          localStorage.removeItem("walletAddress");
-        }
-      });
-
-      window.aptos.onDisconnect?.(() => {
-        setWalletAddress(null);
-        localStorage.removeItem("walletAddress");
-      });
-    }
-  }, []);
-
-  useEffect(() => {
-    if (walletAddress) {
-      localStorage.setItem("walletAddress", walletAddress);
-    }
-  }, [walletAddress]);
 
   return (
     <nav className="fixed top-0 left-0 right-0 z-50 glass-card border-b border-border/50 shadow-xl transition-all duration-300">
